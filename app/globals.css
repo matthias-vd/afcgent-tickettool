@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f0f2f5;
+  --ink: #081c3c;
+  --muted: #5c6b80;
+  --card: #ffffff;
+  --line: #d8dee8;
+  --accent: #ec6525;
+  --forest: #081c3c;
+  --navy-hover: #071833;
+  --ok: #1f7a4d;
+  --warn: #c9561f;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-forest: var(--forest);
+  --color-navy-hover: var(--navy-hover);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --font-sans: var(--font-josefin);
+  --font-serif: var(--font-josefin);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-sans), "Josefin Sans", sans-serif;
+}
+
+.serif {
+  font-family: var(--font-serif), "Josefin Sans", sans-serif;
+  font-weight: 700;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.field label {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.field input,
+.field textarea,
+.field select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  border-radius: 0.85rem;
+  padding: 0.8rem 0.95rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field input:focus,
+.field textarea:focus,
+.field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.ticket-card {
+  background:
+    radial-gradient(circle at left center, var(--paper) 10px, transparent 10.5px),
+    radial-gradient(circle at right center, var(--paper) 10px, transparent 10.5px),
+    var(--card);
+  border: 1px solid var(--line);
+}
+
+@media print {
+  body {
+    background: white;
+  }
+
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+
+  .ticket-card {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+}
