@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { isValidSession, SESSION_COOKIE } from "@/lib/auth";
-import { checkInRegistration, undoCheckIn } from "@/lib/db";
+import { checkInRegistration, getEventBySlug, undoCheckIn } from "@/lib/db";
 import { parseTicketPayload } from "@/lib/ticket";
 
 export const runtime = "nodejs";
@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     token?: string;
     id?: string;
     email?: string;
+    eventSlug?: string;
     undo?: boolean;
   };
 
@@ -32,12 +33,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, registration, undone: true });
   }
 
+  const event = body.eventSlug ? getEventBySlug(body.eventSlug) : null;
+  if (body.eventSlug && !event) {
+    return NextResponse.json({ error: "Onbekend event." }, { status: 404 });
+  }
+
   const token = body.token || (body.payload ? parseTicketPayload(body.payload) : null);
   const result = checkInRegistration({
     token: token || undefined,
     id: body.id,
     email: body.email?.trim(),
+    eventId: event?.id,
   });
+
+  if (result && "ambiguous" in result) {
+    return NextResponse.json(
+      {
+        error:
+          "Deze e-mail komt in meerdere events voor. Kies eerst een specifiek event.",
+      },
+      { status: 409 },
+    );
+  }
 
   if (!result) {
     return NextResponse.json(
@@ -54,5 +71,6 @@ export async function POST(request: NextRequest) {
     foodPreference: result.registration.foodPreference,
     checkedInAt: result.registration.checkedInAt,
     id: result.registration.id,
+    eventName: result.registration.eventName,
   });
 }

@@ -1,7 +1,7 @@
 import { getAppUrl } from "./config";
 
-export function ticketUrl(token: string) {
-  return `${getAppUrl()}/ticket/${token}`;
+export function ticketUrl(eventSlug: string, token: string) {
+  return `${getAppUrl()}/ticket/${eventSlug}/${token}`;
 }
 
 export function parseTicketPayload(raw: string): string | null {
@@ -16,7 +16,7 @@ export function parseTicketPayload(raw: string): string | null {
     const parts = url.pathname.split("/").filter(Boolean);
     const ticketIndex = parts.findIndex((part) => part === "ticket" || part === "t");
     if (ticketIndex >= 0 && parts[ticketIndex + 1]) {
-      return parts[ticketIndex + 1];
+      return parts.at(-1) ?? parts[ticketIndex + 1];
     }
   } catch {
     // Not a URL — fall through to raw token.

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Josefin_Sans } from "next/font/google";
-import { getEvent } from "@/lib/config";
 import "./globals.css";
 
 const josefin = Josefin_Sans({
@@ -10,13 +9,12 @@ const josefin = Josefin_Sans({
 });
 
 export async function generateMetadata(): Promise<Metadata> {
-  const event = getEvent();
   return {
     title: {
-      default: event.name,
-      template: `%s · ${event.name}`,
+      default: "AFC Ticketing",
+      template: "%s · AFC Ticketing",
     },
-    description: event.intro,
+    description: "Inschrijvingen, QR-tickets, check-in en export voor meerdere events.",
   };
 }
 

@@ -9,6 +9,7 @@ function csvCell(value: string) {
 
 export function registrationsToCsv(rows: Registration[]) {
   const header = [
+    "Event",
     "Naam",
     "E-mail",
     "Telefoon",
@@ -23,6 +24,7 @@ export function registrationsToCsv(rows: Registration[]) {
 
   const lines = rows.map((row) =>
     [
+      row.eventName,
       row.name,
       row.email,
       row.phone,

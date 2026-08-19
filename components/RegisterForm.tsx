@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { FOOD_OPTIONS } from "@/lib/food";
 
-export function RegisterForm() {
+export function RegisterForm({ eventSlug }: { eventSlug: string }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -26,17 +26,18 @@ export function RegisterForm() {
       const payload = (await response.json()) as {
         error?: string;
         token?: string;
+        eventSlug?: string;
         emailSent?: boolean;
       };
 
-      if (!response.ok || !payload.token) {
+      if (!response.ok || !payload.token || !payload.eventSlug) {
         setError(payload.error ?? "Inschrijven is niet gelukt.");
         return;
       }
 
       const params = new URLSearchParams({ nieuw: "1" });
       params.set("mail", payload.emailSent ? "1" : "0");
-      router.push(`/ticket/${payload.token}?${params.toString()}`);
+      router.push(`/ticket/${payload.eventSlug}/${payload.token}?${params.toString()}`);
     } catch {
       setError("Er ging iets mis. Probeer het opnieuw.");
     } finally {
@@ -46,6 +47,7 @@ export function RegisterForm() {
 
   return (
     <form onSubmit={onSubmit} className="grid gap-5">
+      <input type="hidden" name="eventSlug" value={eventSlug} />
       <div className="field">
         <label htmlFor="name">Naam</label>
         <input id="name" name="name" autoComplete="name" required maxLength={120} />
