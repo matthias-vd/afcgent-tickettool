@@ -128,13 +128,26 @@ function migrateRegistrationsTable(db: Database.Database) {
   db.exec(`DROP TABLE registrations_legacy;`);
 }
 
+function isVercelRuntime() {
+  return Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
+}
+
+/** Local disk for demos; on Vercel the app filesystem is read-only, so use /tmp. */
+function getDataDir() {
+  if (isVercelRuntime()) {
+    return path.join("/tmp", "ticketing-data");
+  }
+  return path.join(process.cwd(), "data");
+}
+
 function createDb() {
-  const dataDir = path.join(process.cwd(), "data");
+  const dataDir = getDataDir();
   const uploadDir = path.join(dataDir, "uploads");
   fs.mkdirSync(uploadDir, { recursive: true });
 
   const db = new Database(path.join(dataDir, "tickets.db"));
-  db.pragma("journal_mode = WAL");
+  // WAL needs extra writable sidecar files; DELETE is safer on serverless /tmp.
+  db.pragma(`journal_mode = ${isVercelRuntime() ? "DELETE" : "WAL"}`);
   db.pragma("foreign_keys = ON");
   ensureEventSchema(db);
   ensureEventsSeeded(db);
@@ -148,9 +161,8 @@ function createDb() {
 }
 
 export const db = globalForDb.ticketDb ?? createDb();
-if (process.env.NODE_ENV !== "production") {
-  globalForDb.ticketDb = db;
-}
+// Reuse the connection across warm serverless invocations too.
+globalForDb.ticketDb = db;
 
 const selectAll = `
   SELECT
@@ -173,7 +185,7 @@ const selectAll = `
 `;
 
 export function getUploadDir() {
-  const dir = path.join(process.cwd(), "data", "uploads");
+  const dir = path.join(getDataDir(), "uploads");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
