@@ -60,7 +60,17 @@ function ensureEventSchema(db: Database.Database) {
   ensureColumn(db, "events", "registration_closes_at", "TEXT");
 }
 
+function tableExists(db: Database.Database, name: string) {
+  const row = db
+    .prepare(
+      `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    )
+    .get(name) as { ok: number } | undefined;
+  return Boolean(row);
+}
+
 function registrationsNeedMigration(db: Database.Database) {
+  if (!tableExists(db, "registrations")) return false;
   const columns = db
     .prepare(`PRAGMA table_info(registrations)`)
     .all() as Array<{ name: string }>;
@@ -127,7 +137,21 @@ function ensureEventsSeeded(db: Database.Database) {
 }
 
 function migrateRegistrationsTable(db: Database.Database) {
-  if (!registrationsNeedMigration(db)) return;
+  const hasLegacy = tableExists(db, "registrations_legacy");
+  const needsMigration = registrationsNeedMigration(db);
+  const hasNewRegistrations =
+    tableExists(db, "registrations") && !needsMigration;
+
+  // Already on the new schema: only clean up a leftover legacy table.
+  if (hasNewRegistrations) {
+    if (hasLegacy) {
+      db.exec(`DROP TABLE IF EXISTS registrations_legacy;`);
+    }
+    return;
+  }
+
+  // Nothing to migrate.
+  if (!needsMigration && !hasLegacy) return;
 
   const fallbackEvent = db
     .prepare(`SELECT id FROM events ORDER BY created_at ASC LIMIT 1`)
@@ -136,22 +160,41 @@ function migrateRegistrationsTable(db: Database.Database) {
     throw new Error("Geen event beschikbaar om registraties te migreren.");
   }
 
-  db.exec(`
-    ALTER TABLE registrations RENAME TO registrations_legacy;
-  `);
-  createRegistrationsTable(db);
-  ensureRegistrationIndexes(db);
-  db.prepare(`
-    INSERT INTO registrations (
-      id, event_id, name, email, phone, extra_info, food_preference,
-      cv_original_name, cv_stored_name, ticket_token, checked_in_at, created_at
-    )
-    SELECT
-      id, ?, name, email, phone, extra_info, food_preference,
-      cv_original_name, cv_stored_name, ticket_token, checked_in_at, created_at
-    FROM registrations_legacy
-  `).run(fallbackEvent.id);
-  db.exec(`DROP TABLE registrations_legacy;`);
+  const migrate = db.transaction(() => {
+    // Case A: old registrations still present.
+    // Case B: previous run renamed to registrations_legacy and crashed.
+    if (needsMigration) {
+      if (hasLegacy) {
+        // Stale leftover name conflict — keep the current old-schema table.
+        db.exec(`DROP TABLE registrations_legacy;`);
+      }
+      db.exec(`ALTER TABLE registrations RENAME TO registrations_legacy;`);
+    }
+
+    createRegistrationsTable(db);
+    ensureRegistrationIndexes(db);
+
+    if (tableExists(db, "registrations_legacy")) {
+      const legacyColumns = db
+        .prepare(`PRAGMA table_info(registrations_legacy)`)
+        .all() as Array<{ name: string }>;
+      if (legacyColumns.length > 0) {
+        db.prepare(`
+          INSERT OR IGNORE INTO registrations (
+            id, event_id, name, email, phone, extra_info, food_preference,
+            cv_original_name, cv_stored_name, ticket_token, checked_in_at, created_at
+          )
+          SELECT
+            id, ?, name, email, phone, extra_info, food_preference,
+            cv_original_name, cv_stored_name, ticket_token, checked_in_at, created_at
+          FROM registrations_legacy
+        `).run(fallbackEvent.id);
+      }
+      db.exec(`DROP TABLE IF EXISTS registrations_legacy;`);
+    }
+  });
+
+  migrate();
 }
 
 function isVercelRuntime() {
@@ -177,12 +220,10 @@ function createDb() {
   db.pragma("foreign_keys = ON");
   ensureEventSchema(db);
   ensureEventsSeeded(db);
-  if (registrationsNeedMigration(db)) {
-    migrateRegistrationsTable(db);
-  } else {
-    createRegistrationsTable(db);
-    ensureRegistrationIndexes(db);
-  }
+  // Always run: also repairs a leftover registrations_legacy from a failed deploy.
+  migrateRegistrationsTable(db);
+  createRegistrationsTable(db);
+  ensureRegistrationIndexes(db);
   return db;
 }
 
