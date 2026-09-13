@@ -7,7 +7,7 @@ import { mapRegistration, type Registration, type RegistrationRow } from "./type
 
 const globalForDb = globalThis as unknown as { ticketDb?: Database.Database };
 
-type DbEvent = {
+export type DbEvent = {
   id: string;
   slug: string;
   name: string;
@@ -15,10 +15,28 @@ type DbEvent = {
   location: string;
   intro: string;
   is_open: number;
+  archived: number;
+  registration_opens_at: string | null;
+  registration_closes_at: string | null;
+  created_at: string;
 };
 
 function randomId() {
   return crypto.randomUUID();
+}
+
+function ensureColumn(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((entry) => entry.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 function ensureEventSchema(db: Database.Database) {
@@ -31,9 +49,15 @@ function ensureEventSchema(db: Database.Database) {
       location TEXT NOT NULL,
       intro TEXT NOT NULL,
       is_open INTEGER NOT NULL DEFAULT 1,
+      archived INTEGER NOT NULL DEFAULT 0,
+      registration_opens_at TEXT,
+      registration_closes_at TEXT,
       created_at TEXT NOT NULL
     );
   `);
+  ensureColumn(db, "events", "archived", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "events", "registration_opens_at", "TEXT");
+  ensureColumn(db, "events", "registration_closes_at", "TEXT");
 }
 
 function registrationsNeedMigration(db: Database.Database) {
@@ -72,31 +96,32 @@ function ensureRegistrationIndexes(db: Database.Database) {
 }
 
 function ensureEventsSeeded(db: Database.Database) {
+  const count = (
+    db.prepare(`SELECT COUNT(*) AS count FROM events`).get() as { count: number }
+  ).count;
+  if (count > 0) return;
+
   const now = new Date().toISOString();
-  const upsert = db.prepare(`
-    INSERT INTO events (id, slug, name, date, location, intro, is_open, created_at)
-    VALUES (@id, @slug, @name, @date, @location, @intro, @is_open, @created_at)
-    ON CONFLICT(slug) DO UPDATE SET
-      name = excluded.name,
-      date = excluded.date,
-      location = excluded.location,
-      intro = excluded.intro,
-      is_open = excluded.is_open
+  const insert = db.prepare(`
+    INSERT INTO events (
+      id, slug, name, date, location, intro, is_open, archived,
+      registration_opens_at, registration_closes_at, created_at
+    ) VALUES (
+      @id, @slug, @name, @date, @location, @intro, @is_open, 0,
+      NULL, NULL, @created_at
+    )
   `);
 
   for (const event of getEvents()) {
-    const existing = db
-      .prepare(`SELECT id, created_at FROM events WHERE slug = ?`)
-      .get(event.slug) as { id: string; created_at: string } | undefined;
-    upsert.run({
-      id: existing?.id ?? randomId(),
+    insert.run({
+      id: randomId(),
       slug: event.slug,
       name: event.name,
       date: event.date,
       location: event.location,
       intro: event.intro,
       is_open: event.isOpen ? 1 : 0,
-      created_at: existing?.created_at ?? now,
+      created_at: now,
     });
   }
 }
@@ -330,18 +355,71 @@ export function getStats(eventId?: string) {
   };
 }
 
-export function listEvents() {
-  return db.prepare(`SELECT * FROM events ORDER BY date ASC`).all() as DbEvent[];
+export function slugifyEventName(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 }
 
-export function getOpenEvents() {
+export function isEventAcceptingRegistrations(
+  event: DbEvent,
+  now = new Date(),
+): boolean {
+  if (event.archived) return false;
+  if (!event.is_open) return false;
+  if (event.registration_opens_at) {
+    const opens = new Date(event.registration_opens_at);
+    if (!Number.isNaN(opens.getTime()) && now < opens) return false;
+  }
+  if (event.registration_closes_at) {
+    const closes = new Date(event.registration_closes_at);
+    if (!Number.isNaN(closes.getTime()) && now > closes) return false;
+  }
+  return true;
+}
+
+export function listEvents() {
   return db
-    .prepare(`SELECT * FROM events WHERE is_open = 1 ORDER BY date ASC`)
+    .prepare(`SELECT * FROM events ORDER BY date ASC`)
+    .all() as DbEvent[];
+}
+
+export function getOpenEvents(now = new Date()) {
+  const events = db
+    .prepare(
+      `
+      SELECT * FROM events
+      WHERE archived = 0 AND is_open = 1
+      ORDER BY date ASC
+    `,
+    )
+    .all() as DbEvent[];
+  return events.filter((event) => isEventAcceptingRegistrations(event, now));
+}
+
+export function getArchivedEvents() {
+  return db
+    .prepare(
+      `
+      SELECT * FROM events
+      WHERE archived = 1
+      ORDER BY date DESC
+    `,
+    )
     .all() as DbEvent[];
 }
 
 export function getEventBySlug(slug: string) {
   return db.prepare(`SELECT * FROM events WHERE slug = ?`).get(slug) as
+    | DbEvent
+    | undefined;
+}
+
+export function getEventById(id: string) {
+  return db.prepare(`SELECT * FROM events WHERE id = ?`).get(id) as
     | DbEvent
     | undefined;
 }
@@ -355,7 +433,13 @@ export function getEventStats() {
         e.slug,
         e.name,
         e.date,
+        e.location,
+        e.intro,
         e.is_open,
+        e.archived,
+        e.registration_opens_at,
+        e.registration_closes_at,
+        e.created_at,
         COUNT(r.id) AS total,
         SUM(CASE WHEN r.checked_in_at IS NOT NULL THEN 1 ELSE 0 END) AS present
       FROM events e
@@ -364,15 +448,157 @@ export function getEventStats() {
       ORDER BY e.date ASC
     `,
     )
-    .all() as Array<{
-    id: string;
-    slug: string;
-    name: string;
-    date: string;
-    is_open: number;
-    total: number;
-    present: number | null;
-  }>;
+    .all() as Array<
+    DbEvent & {
+      total: number;
+      present: number | null;
+    }
+  >;
+}
+
+export type EventInput = {
+  name: string;
+  slug?: string;
+  date: string;
+  location: string;
+  intro: string;
+  isOpen?: boolean;
+  archived?: boolean;
+  registrationOpensAt?: string | null;
+  registrationClosesAt?: string | null;
+};
+
+function normalizeOptionalDate(value: string | null | undefined) {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("Ongeldige datum.");
+  }
+  return parsed.toISOString();
+}
+
+export function createEvent(input: EventInput): DbEvent {
+  const slug = slugifyEventName(input.slug?.trim() || input.name);
+  if (!slug) throw new Error("Slug ontbreekt.");
+  if (getEventBySlug(slug)) {
+    throw new Error("Deze slug bestaat al.");
+  }
+
+  const id = randomId();
+  const createdAt = new Date().toISOString();
+  db.prepare(
+    `
+    INSERT INTO events (
+      id, slug, name, date, location, intro, is_open, archived,
+      registration_opens_at, registration_closes_at, created_at
+    ) VALUES (
+      @id, @slug, @name, @date, @location, @intro, @is_open, @archived,
+      @registration_opens_at, @registration_closes_at, @created_at
+    )
+  `,
+  ).run({
+    id,
+    slug,
+    name: input.name.trim(),
+    date: input.date.trim(),
+    location: input.location.trim(),
+    intro: input.intro.trim(),
+    is_open: input.isOpen === false ? 0 : 1,
+    archived: input.archived ? 1 : 0,
+    registration_opens_at: normalizeOptionalDate(input.registrationOpensAt),
+    registration_closes_at: normalizeOptionalDate(input.registrationClosesAt),
+    created_at: createdAt,
+  });
+
+  const created = getEventById(id);
+  if (!created) throw new Error("Event kon niet worden aangemaakt.");
+  return created;
+}
+
+export function updateEvent(id: string, input: EventInput): DbEvent {
+  const existing = getEventById(id);
+  if (!existing) throw new Error("Event niet gevonden.");
+
+  const slug = slugifyEventName(input.slug?.trim() || input.name);
+  if (!slug) throw new Error("Slug ontbreekt.");
+  const conflict = getEventBySlug(slug);
+  if (conflict && conflict.id !== id) {
+    throw new Error("Deze slug bestaat al.");
+  }
+
+  db.prepare(
+    `
+    UPDATE events SET
+      slug = @slug,
+      name = @name,
+      date = @date,
+      location = @location,
+      intro = @intro,
+      is_open = @is_open,
+      archived = @archived,
+      registration_opens_at = @registration_opens_at,
+      registration_closes_at = @registration_closes_at
+    WHERE id = @id
+  `,
+  ).run({
+    id,
+    slug,
+    name: input.name.trim(),
+    date: input.date.trim(),
+    location: input.location.trim(),
+    intro: input.intro.trim(),
+    is_open: input.isOpen === false ? 0 : 1,
+    archived: input.archived ? 1 : 0,
+    registration_opens_at: normalizeOptionalDate(input.registrationOpensAt),
+    registration_closes_at: normalizeOptionalDate(input.registrationClosesAt),
+  });
+
+  const updated = getEventById(id);
+  if (!updated) throw new Error("Event kon niet worden bijgewerkt.");
+  return updated;
+}
+
+export function setEventArchived(id: string, archived: boolean): DbEvent {
+  const existing = getEventById(id);
+  if (!existing) throw new Error("Event niet gevonden.");
+  db.prepare(`UPDATE events SET archived = ? WHERE id = ?`).run(
+    archived ? 1 : 0,
+    id,
+  );
+  const updated = getEventById(id);
+  if (!updated) throw new Error("Event kon niet worden bijgewerkt.");
+  return updated;
+}
+
+export function deleteEvent(id: string): DbEvent {
+  const existing = getEventById(id);
+  if (!existing) throw new Error("Event niet gevonden.");
+
+  const registrations = listRegistrations(id);
+  const deleteReg = db.prepare(`DELETE FROM registrations WHERE id = ?`);
+  const removeEvent = db.prepare(`DELETE FROM events WHERE id = ?`);
+
+  const tx = db.transaction(() => {
+    for (const registration of registrations) {
+      deleteReg.run(registration.id);
+    }
+    removeEvent.run(id);
+  });
+  tx();
+
+  for (const registration of registrations) {
+    if (!registration.cvStoredName) continue;
+    const filePath = path.join(getUploadDir(), registration.cvStoredName);
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch {
+      // Best-effort cleanup of uploaded CVs.
+    }
+  }
+
+  return existing;
 }
 
 export function checkInRegistration(lookup: {

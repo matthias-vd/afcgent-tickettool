@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { RegisterForm } from "@/components/RegisterForm";
+import { SiteHeader } from "@/components/SiteHeader";
 import { formatEventDate } from "@/lib/datetime";
-import { getEventBySlug } from "@/lib/db";
+import { getEventBySlug, isEventAcceptingRegistrations } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -13,21 +14,18 @@ export default async function EventRegistrationPage({
 }) {
   const { slug } = await params;
   const event = getEventBySlug(slug);
-  if (!event || !event.is_open) notFound();
+  if (!event || event.archived) notFound();
+
+  const open = isEventAcceptingRegistrations(event);
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
-        <Link href="/" className="text-sm text-muted hover:text-ink">
-          ← Alle events
-        </Link>
-        <Link href="/admin/login" className="text-sm text-muted hover:text-ink">
-          Organisatie
-        </Link>
-      </header>
+      <SiteHeader />
       <main className="mx-auto grid w-full max-w-6xl flex-1 gap-12 px-6 pb-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
         <section className="max-w-xl pt-4">
-          <p className="text-sm tracking-[0.18em] uppercase text-accent">Live inschrijving</p>
+          <p className="text-sm tracking-[0.18em] uppercase text-accent">
+            {open ? "Live inschrijving" : "Inschrijving gesloten"}
+          </p>
           <h1 className="serif mt-4 text-5xl leading-[1.05] sm:text-6xl">{event.name}</h1>
           <p className="mt-6 max-w-md text-lg leading-8 text-muted">{event.intro}</p>
           <dl className="mt-10 grid gap-5 text-sm">
@@ -39,20 +37,50 @@ export default async function EventRegistrationPage({
               <dt className="text-muted">Waar</dt>
               <dd className="mt-1 text-base">{event.location}</dd>
             </div>
-            <div>
-              <dt className="text-muted">Na inschrijving</dt>
-              <dd className="mt-1 text-base">
-                Je krijgt een e-mail met QR-code. Die scannen we aan de deur.
-              </dd>
-            </div>
+            {(event.registration_opens_at || event.registration_closes_at) && (
+              <div>
+                <dt className="text-muted">Inschrijfperiode</dt>
+                <dd className="mt-1 text-base">
+                  {event.registration_opens_at
+                    ? formatEventDate(event.registration_opens_at)
+                    : "Nu"}
+                  {" → "}
+                  {event.registration_closes_at
+                    ? formatEventDate(event.registration_closes_at)
+                    : "geen einddatum"}
+                </dd>
+              </div>
+            )}
           </dl>
+          <p className="mt-8">
+            <Link href="/" className="text-sm text-muted hover:text-ink">
+              ← Alle events
+            </Link>
+          </p>
         </section>
         <section className="rounded-[28px] border border-line bg-card p-6 sm:p-8">
-          <h2 className="serif text-3xl">Je gegevens</h2>
-          <p className="mt-2 mb-8 text-sm text-muted">
-            Alle velden zijn verplicht, behalve extra info.
-          </p>
-          <RegisterForm eventSlug={event.slug} />
+          {open ? (
+            <>
+              <h2 className="serif text-3xl">Je gegevens</h2>
+              <p className="mt-2 mb-8 text-sm text-muted">
+                Alle velden zijn verplicht, behalve extra info.
+              </p>
+              <RegisterForm eventSlug={event.slug} />
+            </>
+          ) : (
+            <>
+              <h2 className="serif text-3xl">Niet beschikbaar</h2>
+              <p className="mt-4 text-muted">
+                Inschrijven voor dit event is momenteel niet mogelijk.
+              </p>
+              <Link
+                href="/afgelopen"
+                className="mt-8 inline-flex rounded-full border border-line px-5 py-3 text-sm font-semibold"
+              >
+                Bekijk afgelopen events
+              </Link>
+            </>
+          )}
         </section>
       </main>
     </div>

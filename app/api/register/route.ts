@@ -6,6 +6,7 @@ import {
   createRegistration,
   getEventBySlug,
   getRegistrationByEmail,
+  isEventAcceptingRegistrations,
   getUploadDir,
 } from "@/lib/db";
 import { sendTicketEmail } from "@/lib/email";
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
   }
 
   const event = getEventBySlug(parsed.data.eventSlug);
-  if (!event || !event.is_open) {
+  if (!event || !isEventAcceptingRegistrations(event)) {
     return NextResponse.json(
       { error: "Dit event is niet (meer) beschikbaar voor inschrijving." },
       { status: 404 },
