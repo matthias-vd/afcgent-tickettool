@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatDateTime } from "@/lib/datetime";
-import { foodLabel } from "@/lib/food";
+import { FOOD_OPTIONS, foodLabel } from "@/lib/food";
 import type { Registration } from "@/lib/types";
 
 type EventOption = {
@@ -24,6 +24,10 @@ export function AttendeeTable({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "present" | "absent">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addPending, setAddPending] = useState(false);
+  const [addSuccess, setAddSuccess] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -31,7 +35,7 @@ export function AttendeeTable({
       if (filter === "present" && !row.checkedInAt) return false;
       if (filter === "absent" && row.checkedInAt) return false;
       if (!needle) return true;
-      return [row.name, row.email, row.phone, foodLabel(row.foodPreference)]
+      return [row.name, row.email, row.phone, row.eventName, foodLabel(row.foodPreference)]
         .join(" ")
         .toLowerCase()
         .includes(needle);
@@ -49,6 +53,70 @@ export function AttendeeTable({
     });
     router.refresh();
     setBusyId(null);
+  }
+
+  async function remove(row: Registration) {
+    const confirmed = window.confirm(
+      `Deelnemer “${row.name}” (${row.email}) verwijderen van ${row.eventName}?`,
+    );
+    if (!confirmed) return;
+
+    setBusyId(row.id);
+    setAddError(null);
+    const response = await fetch("/api/admin/attendees", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: row.id }),
+    });
+    const payload = (await response.json()) as { error?: string };
+    setBusyId(null);
+
+    if (!response.ok) {
+      setAddError(payload.error ?? "Verwijderen is niet gelukt.");
+      return;
+    }
+
+    router.refresh();
+  }
+
+  async function onAdd(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAddError(null);
+    setAddSuccess(null);
+    setAddPending(true);
+
+    const form = event.currentTarget;
+    const data = new FormData(form);
+
+    try {
+      const response = await fetch("/api/admin/attendees", {
+        method: "POST",
+        body: data,
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ticketPath?: string;
+        emailSent?: boolean;
+      };
+
+      if (!response.ok) {
+        setAddError(payload.error ?? "Toevoegen is niet gelukt.");
+        return;
+      }
+
+      form.reset();
+      setAddSuccess(
+        payload.ticketPath
+          ? `Deelnemer toegevoegd.${payload.emailSent ? " Mail verzonden." : ""}`
+          : "Deelnemer toegevoegd.",
+      );
+      setShowAddForm(false);
+      router.refresh();
+    } catch {
+      setAddError("Er ging iets mis. Probeer opnieuw.");
+    } finally {
+      setAddPending(false);
+    }
   }
 
   return (
@@ -96,6 +164,17 @@ export function AttendeeTable({
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            setShowAddForm((open) => !open);
+            setAddError(null);
+            setAddSuccess(null);
+          }}
+          className="rounded-full border border-line px-5 py-2.5 text-sm font-semibold"
+        >
+          {showAddForm ? "Formulier sluiten" : "Deelnemer toevoegen"}
+        </button>
         <a
           href={
             selectedEventSlug === "all"
@@ -107,6 +186,128 @@ export function AttendeeTable({
           Exporteer CSV
         </a>
       </div>
+
+      {showAddForm ? (
+        <form
+          onSubmit={onAdd}
+          className="grid gap-4 rounded-[28px] border border-line bg-card p-5 sm:grid-cols-2"
+        >
+          <div className="field sm:col-span-2">
+            <label htmlFor="admin-eventSlug">Event</label>
+            <select
+              id="admin-eventSlug"
+              name="eventSlug"
+              required
+              defaultValue={selectedEventSlug === "all" ? "" : selectedEventSlug}
+              className="w-full rounded-2xl border border-line bg-card px-4 py-3"
+            >
+              <option value="" disabled>
+                Kies een event
+              </option>
+              {events.map((event) => (
+                <option key={event.slug} value={event.slug}>
+                  {event.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="admin-name">Naam</label>
+            <input
+              id="admin-name"
+              name="name"
+              required
+              maxLength={120}
+              className="w-full rounded-2xl border border-line bg-card px-4 py-3"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="admin-email">E-mail</label>
+            <input
+              id="admin-email"
+              name="email"
+              type="email"
+              required
+              className="w-full rounded-2xl border border-line bg-card px-4 py-3"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="admin-phone">Telefoon</label>
+            <input
+              id="admin-phone"
+              name="phone"
+              type="tel"
+              required
+              minLength={8}
+              maxLength={40}
+              className="w-full rounded-2xl border border-line bg-card px-4 py-3"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="admin-foodPreference">Voedselvoorkeur</label>
+            <select
+              id="admin-foodPreference"
+              name="foodPreference"
+              required
+              defaultValue=""
+              className="w-full rounded-2xl border border-line bg-card px-4 py-3"
+            >
+              <option value="" disabled>
+                Kies een optie
+              </option>
+              {FOOD_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field sm:col-span-2">
+            <label htmlFor="admin-extraInfo">Extra info</label>
+            <textarea
+              id="admin-extraInfo"
+              name="extraInfo"
+              rows={3}
+              maxLength={2000}
+              className="w-full rounded-2xl border border-line bg-card px-4 py-3"
+            />
+          </div>
+          <div className="field sm:col-span-2">
+            <label htmlFor="admin-cv">CV (PDF, optioneel)</label>
+            <input
+              id="admin-cv"
+              name="cv"
+              type="file"
+              accept="application/pdf,.pdf"
+              className="w-full rounded-2xl border border-line bg-card px-4 py-3"
+            />
+          </div>
+          <label className="flex items-center gap-3 text-sm sm:col-span-2">
+            <input type="checkbox" name="sendEmail" value="1" />
+            Bevestigingsmail sturen (als SMTP geconfigureerd is)
+          </label>
+          <div className="sm:col-span-2">
+            <button
+              type="submit"
+              disabled={addPending}
+              className="rounded-full bg-forest px-5 py-2.5 text-sm font-semibold text-card disabled:opacity-60"
+            >
+              {addPending ? "Bezig…" : "Deelnemer opslaan"}
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {addError ? (
+        <p className="rounded-2xl border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-accent">
+          {addError}
+        </p>
+      ) : null}
+      {addSuccess ? (
+        <p className="rounded-2xl border border-line bg-card px-4 py-3 text-sm text-muted">
+          {addSuccess}
+        </p>
+      ) : null}
 
       <p className="text-sm text-muted">{filtered.length} resultaten</p>
 
@@ -159,9 +360,27 @@ export function AttendeeTable({
                     >
                       {row.checkedInAt ? "Check-in ongedaan" : "Check in"}
                     </button>
-                    <a href={`/api/cv/${row.id}`} className="text-muted underline">
-                      Download CV
+                    {row.cvStoredName ? (
+                      <a href={`/api/cv/${row.id}`} className="text-muted underline">
+                        Download CV
+                      </a>
+                    ) : null}
+                    <a
+                      href={`/ticket/${row.eventSlug}/${encodeURIComponent(row.ticketToken)}`}
+                      className="text-muted underline"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open ticket
                     </a>
+                    <button
+                      type="button"
+                      disabled={busyId === row.id}
+                      onClick={() => remove(row)}
+                      className="rounded-full border border-accent/40 px-3 py-1.5 text-accent"
+                    >
+                      Verwijderen
+                    </button>
                   </div>
                 </td>
               </tr>

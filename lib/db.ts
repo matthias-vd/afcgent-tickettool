@@ -422,3 +422,21 @@ export function undoCheckIn(id: string): Registration | undefined {
   db.prepare(`UPDATE registrations SET checked_in_at = NULL WHERE id = ?`).run(id);
   return getRegistrationById(id);
 }
+
+export function deleteRegistration(id: string): Registration | undefined {
+  const registration = getRegistrationById(id);
+  if (!registration) return undefined;
+
+  db.prepare(`DELETE FROM registrations WHERE id = ?`).run(id);
+
+  if (registration.cvStoredName) {
+    const filePath = path.join(getUploadDir(), registration.cvStoredName);
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch {
+      // Best-effort cleanup of the uploaded CV.
+    }
+  }
+
+  return registration;
+}
