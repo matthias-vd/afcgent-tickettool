@@ -482,6 +482,8 @@ export function getEventStats() {
         e.date,
         e.location,
         e.intro,
+        e.description,
+        e.image_stored_name,
         e.is_open,
         e.archived,
         e.registration_opens_at,
