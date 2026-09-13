@@ -1,22 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { formatEventDate } from "@/lib/datetime";
 import { foodLabel } from "@/lib/food";
 import type { Registration } from "@/lib/types";
 
 export function TicketCard({
   eventName,
-  eventDate,
-  eventLocation,
   registration,
   qrDataUrl,
   isNew,
   emailSent,
 }: {
   eventName: string;
-  eventDate: string;
-  eventLocation: string;
   registration: Registration;
   qrDataUrl: string;
   isNew?: boolean;
@@ -34,11 +29,6 @@ export function TicketCard({
         )}
         <div>
           <h1 className="serif text-4xl leading-tight sm:text-5xl">{eventName}</h1>
-          <p className="mt-3 text-muted">
-            {formatEventDate(eventDate)}
-            <span className="mx-2">·</span>
-            {eventLocation}
-          </p>
         </div>
         <div className="grid gap-6 sm:grid-cols-[1fr_auto] sm:items-center">
           <div className="space-y-3">

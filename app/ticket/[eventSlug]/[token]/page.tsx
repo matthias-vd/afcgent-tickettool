@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import { TicketCard } from "@/components/TicketCard";
-import { getEvent } from "@/lib/config";
 import { getRegistrationByToken } from "@/lib/db";
 import { qrDataUrl } from "@/lib/qr";
 
@@ -8,23 +7,21 @@ export default async function TicketPage({
   params,
   searchParams,
 }: {
-  params: Promise<{ token: string }>;
+  params: Promise<{ eventSlug: string; token: string }>;
   searchParams: Promise<{ nieuw?: string; mail?: string }>;
 }) {
-  const { token } = await params;
+  const { eventSlug, token: rawToken } = await params;
   const query = await searchParams;
+  const token = decodeURIComponent(rawToken);
   const registration = getRegistrationByToken(token);
-  if (!registration) notFound();
+  if (!registration || registration.eventSlug !== eventSlug) notFound();
 
-  const event = getEvent();
-  const qr = await qrDataUrl(registration.ticketToken);
+  const qr = await qrDataUrl(registration.eventSlug, registration.ticketToken);
 
   return (
     <div className="flex min-h-full flex-col px-4 py-10 sm:py-16">
       <TicketCard
-        eventName={event.name}
-        eventDate={event.date}
-        eventLocation={event.location}
+        eventName={registration.eventName}
         registration={registration}
         qrDataUrl={qr}
         isNew={query.nieuw === "1"}

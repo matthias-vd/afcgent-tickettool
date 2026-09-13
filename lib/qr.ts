@@ -1,8 +1,8 @@
 import QRCode from "qrcode";
 import { ticketUrl } from "./ticket";
 
-export async function qrDataUrl(token: string) {
-  return QRCode.toDataURL(ticketUrl(token), {
+export async function qrDataUrl(eventSlug: string, token: string) {
+  return QRCode.toDataURL(ticketUrl(eventSlug, token), {
     width: 360,
     margin: 1,
     errorCorrectionLevel: "M",
@@ -10,8 +10,8 @@ export async function qrDataUrl(token: string) {
   });
 }
 
-export async function qrPngBuffer(token: string) {
-  return QRCode.toBuffer(ticketUrl(token), {
+export async function qrPngBuffer(eventSlug: string, token: string) {
+  return QRCode.toBuffer(ticketUrl(eventSlug, token), {
     width: 360,
     margin: 1,
     errorCorrectionLevel: "M",

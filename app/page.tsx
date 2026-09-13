@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { RegisterForm } from "@/components/RegisterForm";
-import { getEvent } from "@/lib/config";
 import { formatEventDate } from "@/lib/datetime";
+import { getOpenEvents } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
 
 export default function HomePage() {
-  const event = getEvent();
+  const events = getOpenEvents();
 
   return (
     <div className="flex min-h-full flex-col">
@@ -14,35 +15,55 @@ export default function HomePage() {
           Organisatie
         </Link>
       </header>
-      <main className="mx-auto grid w-full max-w-6xl flex-1 gap-12 px-6 pb-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
-        <section className="max-w-xl pt-4">
-          <p className="text-sm tracking-[0.18em] uppercase text-accent">Live inschrijving</p>
-          <h1 className="serif mt-4 text-5xl leading-[1.05] sm:text-6xl">{event.name}</h1>
-          <p className="mt-6 max-w-md text-lg leading-8 text-muted">{event.intro}</p>
-          <dl className="mt-10 grid gap-5 text-sm">
-            <div>
-              <dt className="text-muted">Wanneer</dt>
-              <dd className="mt-1 text-base">{formatEventDate(event.date)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Waar</dt>
-              <dd className="mt-1 text-base">{event.location}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Na inschrijving</dt>
-              <dd className="mt-1 text-base">
-                Je krijgt een e-mail met QR-code. Die scannen we aan de deur.
-              </dd>
-            </div>
-          </dl>
-        </section>
-        <section className="rounded-[28px] border border-line bg-card p-6 sm:p-8">
-          <h2 className="serif text-3xl">Je gegevens</h2>
-          <p className="mt-2 mb-8 text-sm text-muted">
-            Alle velden zijn verplicht, behalve extra info.
+      <main className="mx-auto w-full max-w-6xl flex-1 px-6 pb-20">
+        <section className="max-w-2xl pt-4">
+          <p className="text-sm tracking-[0.18em] uppercase text-accent">
+            Beschikbare events
           </p>
-          <RegisterForm />
+          <h1 className="serif mt-4 text-5xl leading-[1.05] sm:text-6xl">
+            Kies een event
+          </h1>
+          <p className="mt-6 text-lg leading-8 text-muted">
+            Hieronder zie je alle events waarvoor je nu kunt inschrijven.
+          </p>
         </section>
+
+        {events.length === 0 ? (
+          <p className="mt-10 rounded-[28px] border border-line bg-card px-6 py-8 text-muted">
+            Er zijn momenteel geen events open voor inschrijving.
+          </p>
+        ) : (
+          <section className="mt-10 grid gap-5 md:grid-cols-2">
+            {events.map((event) => (
+              <article
+                key={event.id}
+                className="rounded-[28px] border border-line bg-card p-6 sm:p-8"
+              >
+                <p className="text-sm tracking-[0.18em] uppercase text-accent">
+                  Open voor inschrijving
+                </p>
+                <h2 className="serif mt-3 text-3xl">{event.name}</h2>
+                <p className="mt-4 text-muted">{event.intro}</p>
+                <dl className="mt-6 grid gap-3 text-sm">
+                  <div>
+                    <dt className="text-muted">Wanneer</dt>
+                    <dd className="mt-1 text-base">{formatEventDate(event.date)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Waar</dt>
+                    <dd className="mt-1 text-base">{event.location}</dd>
+                  </div>
+                </dl>
+                <Link
+                  href={`/events/${event.slug}`}
+                  className="mt-7 inline-flex rounded-full bg-forest px-5 py-3 text-sm font-semibold text-card"
+                >
+                  Inschrijven
+                </Link>
+              </article>
+            ))}
+          </section>
+        )}
       </main>
     </div>
   );

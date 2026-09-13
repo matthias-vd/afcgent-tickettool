@@ -7,6 +7,7 @@ const foodValues = FOOD_OPTIONS.map((option) => option.value) as [
 ];
 
 export const registrationFields = z.object({
+  eventSlug: z.string().trim().min(1, "Ongeldig event."),
   name: z.string().trim().min(2, "Vul je naam in.").max(120),
   email: z
     .string()

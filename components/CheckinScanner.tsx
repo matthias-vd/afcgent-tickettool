@@ -4,13 +4,18 @@ import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import { foodLabel } from "@/lib/food";
 
+type EventOption = {
+  slug: string;
+  name: string;
+};
+
 type ScanResult = {
   kind: "ok" | "repeat" | "error";
   title: string;
   detail: string;
 };
 
-export function CheckinScanner() {
+export function CheckinScanner({ events }: { events: EventOption[] }) {
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
@@ -19,6 +24,7 @@ export function CheckinScanner() {
   const [paused, setPaused] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [manual, setManual] = useState("");
+  const [eventSlug, setEventSlug] = useState("all");
   const busy = useRef(false);
 
   const submit = useCallback(async (body: Record<string, string>) => {
@@ -30,7 +36,10 @@ export function CheckinScanner() {
       const response = await fetch("/api/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...body,
+          ...(eventSlug !== "all" ? { eventSlug } : {}),
+        }),
       });
       const payload = (await response.json()) as {
         error?: string;
@@ -77,7 +86,7 @@ export function CheckinScanner() {
         busy.current = false;
       }, 2400);
     }
-  }, []);
+  }, [eventSlug]);
 
   if (!mounted) {
     return (
@@ -144,6 +153,22 @@ export function CheckinScanner() {
             );
           }}
         >
+          <label htmlFor="eventFilter" className="text-sm font-semibold">
+            Event
+          </label>
+          <select
+            id="eventFilter"
+            value={eventSlug}
+            onChange={(event) => setEventSlug(event.target.value)}
+            className="rounded-2xl border border-line bg-card px-4 py-3"
+          >
+            <option value="all">Alle events</option>
+            {events.map((event) => (
+              <option key={event.slug} value={event.slug}>
+                {event.name}
+              </option>
+            ))}
+          </select>
           <label htmlFor="manual" className="text-sm font-semibold">
             Handmatig (e-mail of ticketcode)
           </label>

@@ -6,7 +6,20 @@ import { formatDateTime } from "@/lib/datetime";
 import { foodLabel } from "@/lib/food";
 import type { Registration } from "@/lib/types";
 
-export function AttendeeTable({ rows }: { rows: Registration[] }) {
+type EventOption = {
+  slug: string;
+  name: string;
+};
+
+export function AttendeeTable({
+  rows,
+  events,
+  selectedEventSlug,
+}: {
+  rows: Registration[];
+  events: EventOption[];
+  selectedEventSlug: string;
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "present" | "absent">("all");
@@ -41,6 +54,22 @@ export function AttendeeTable({ rows }: { rows: Registration[] }) {
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <select
+          value={selectedEventSlug}
+          onChange={(event) => {
+            const value = event.target.value;
+            window.location.href =
+              value === "all" ? "/admin/deelnemers" : `/admin/deelnemers?event=${value}`;
+          }}
+          className="w-full rounded-2xl border border-line bg-card px-4 py-3 sm:max-w-xs"
+        >
+          <option value="all">Alle events</option>
+          {events.map((event) => (
+            <option key={event.slug} value={event.slug}>
+              {event.name}
+            </option>
+          ))}
+        </select>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -68,7 +97,11 @@ export function AttendeeTable({ rows }: { rows: Registration[] }) {
           ))}
         </div>
         <a
-          href="/api/export"
+          href={
+            selectedEventSlug === "all"
+              ? "/api/export"
+              : `/api/export?event=${selectedEventSlug}`
+          }
           className="rounded-full bg-forest px-5 py-2.5 text-sm font-semibold text-card sm:ml-auto"
         >
           Exporteer CSV
@@ -82,6 +115,7 @@ export function AttendeeTable({ rows }: { rows: Registration[] }) {
           <thead className="border-b border-line text-muted">
             <tr>
               <th className="px-4 py-3 font-medium">Naam</th>
+              <th className="px-4 py-3 font-medium">Event</th>
               <th className="px-4 py-3 font-medium">Contact</th>
               <th className="px-4 py-3 font-medium">Eten</th>
               <th className="px-4 py-3 font-medium">Status</th>
@@ -97,6 +131,7 @@ export function AttendeeTable({ rows }: { rows: Registration[] }) {
                     <p className="mt-1 max-w-xs text-muted">{row.extraInfo}</p>
                   ) : null}
                 </td>
+                <td className="px-4 py-4">{row.eventName}</td>
                 <td className="px-4 py-4">
                   <p>{row.email}</p>
                   <p className="text-muted">{row.phone}</p>

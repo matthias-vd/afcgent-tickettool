@@ -1,5 +1,8 @@
 export type Registration = {
   id: string;
+  eventId: string;
+  eventSlug: string;
+  eventName: string;
   name: string;
   email: string;
   phone: string;
@@ -14,6 +17,9 @@ export type Registration = {
 
 export type RegistrationRow = {
   id: string;
+  event_id: string;
+  event_slug: string;
+  event_name: string;
   name: string;
   email: string;
   phone: string;
@@ -29,6 +35,9 @@ export type RegistrationRow = {
 export function mapRegistration(row: RegistrationRow): Registration {
   return {
     id: row.id,
+    eventId: row.event_id,
+    eventSlug: row.event_slug,
+    eventName: row.event_name,
     name: row.name,
     email: row.email,
     phone: row.phone,
