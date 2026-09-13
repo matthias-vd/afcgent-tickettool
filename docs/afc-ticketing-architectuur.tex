@@ -1,0 +1,781 @@
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[dutch]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tocloft}
+\usepackage{csquotes}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue!50!black,
+  citecolor=black,
+  pdftitle={AFC Ticketing --- Volledige technische documentatie},
+  pdfauthor={AFC Gent Ticketing}
+}
+
+\definecolor{codebg}{RGB}{246,247,249}
+\definecolor{codeframe}{RGB}{216,222,232}
+\definecolor{brandnavy}{HTML}{081C3C}
+\definecolor{brandorange}{HTML}{EC6525}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  tabsize=2,
+  literate=
+    {á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1
+    {Á}{{\'A}}1 {É}{{\'E}}1 {Í}{{\'I}}1 {Ó}{{\'O}}1 {Ú}{{\'U}}1
+    {à}{{\`a}}1 {è}{{\`e}}1 {ì}{{\`i}}1 {ò}{{\`o}}1 {ù}{{\`u}}1
+    {ä}{{\"a}}1 {ë}{{\"e}}1 {ï}{{\"i}}1 {ö}{{\"o}}1 {ü}{{\"u}}1
+    {Ä}{{\"A}}1 {Ë}{{\"E}}1 {Ï}{{\"I}}1 {Ö}{{\"O}}1 {Ü}{{\"U}}1
+    {â}{{\^a}}1 {ê}{{\^e}}1 {î}{{\^i}}1 {ô}{{\^o}}1 {û}{{\^u}}1
+    {ç}{{\c c}}1 {Ç}{{\c C}}1
+    {ñ}{{\~n}}1 {Ñ}{{\~N}}1
+    {ß}{{\ss}}1
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small AFC Ticketing --- technische documentatie}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\title{\textbf{AFC Ticketing}\\[0.4em]
+\large Volledige technische documentatie, architectuur en reconstructiegids}
+\author{Gebaseerd op de codebase \texttt{ticketing} (Next.js 16 / React 19 / SQLite)}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Dit document beschrijft de AFC Gent ticketing-applicatie tot op reconstructieniveau.
+Het legt uit \emph{waarom} elke architectuurkeuze gemaakt is, \emph{wat} ieder bestand doet,
+\emph{hoe} de datalaag, authenticatie, tickets, API's en gebruikersflows werken, en
+\emph{hoe} je de tool vanaf nul opnieuw zou bouwen.
+De applicatie is een monolithische Next.js~16 App Router-app met ingebouwde API-routes,
+een lokale SQLite-database via \texttt{better-sqlite3}, optionele SMTP-mail, en HMAC-ondertekende
+QR-tickets die ook op ephemeral serverless-schijven blijven werken.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%======================================================================
+\chapter{Doel, scope en ontwerpprincipes}
+%======================================================================
+
+\section{Wat de tool doet}
+De applicatie ondersteunt meerdere events binnen één installatie:
+\begin{itemize}[leftmargin=*]
+  \item Publieke homepage met openstaande events (optioneel met foto).
+  \item Inschrijfformulier per event (naam, e-mail, telefoon, voedselvoorkeur, optionele extra info, verplicht CV als PDF).
+  \item Ticketpagina met QR-code na inschrijving; optionele bevestigingsmail.
+  \item Adminportaal: login, dashboard, eventbeheer (CRUD/archief/foto/uitgebreide beschrijving),
+        deelnemersbeheer (toevoegen/verwijderen/check-in), QR-scanner, CSV-export.
+  \item Archiefpagina voor afgelopen events.
+\end{itemize}
+
+\section{Niet-functionele eisen die de architectuur sturen}
+\begin{description}[style=nextline,leftmargin=0pt]
+  \item[Eén process / één service]
+    Geen aparte backend-API-server. Alles leeft in Next.js (\texttt{app/} voor UI, \texttt{app/api/} voor HTTP).
+    Dit vermindert deployment-complexiteit voor een clubtool.
+  \item[Locale persistentie]
+    SQLite in \texttt{data/tickets.db} + uploads in \texttt{data/uploads/}. Geen Postgres-vereiste.
+    Op Vercel is de schijf read-only buiten \texttt{/tmp}; daarom schrijft de runtime daar naartoe.
+  \item[Serverless-robust tickets]
+    Op Vercel heeft elke serverless-instance een eigen lege \texttt{/tmp}-SQLite.
+    Daarom zijn tickets HMAC-ondertekend: de payload zelf bewijst geldigheid, zelfs als de lokale DB de rij mist.
+  \item[Admin is ``good enough'', niet enterprise-IAM]
+    Eén gedeeld wachtwoord + cookie-sessie. Geschikt voor een organisatiesleutel, niet voor multi-user RBAC.
+  \item[Nederlandstalige UX]
+    Copy, foutmeldingen, CSV-headers en datums (\texttt{nl-BE}, tijdzone \texttt{Europe/Brussels}).
+\end{description}
+
+\section{Waarom TypeScript}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Contracten over grenzen heen:} FormData $\to$ Zod $\to$ DB-row $\to$ camelCase domain model.
+    TypeScript vangt mismatch tussen \texttt{RegistrationRow} (snake\_case SQL) en \texttt{Registration} (app-model).
+  \item \textbf{Next.js App Router} is TypeScript-first (\texttt{params: Promise<...>}, route handlers, server/client boundary).
+  \item \textbf{Native modules} zoals \texttt{better-sqlite3} hebben \texttt{@types}; compile-time checks vermijden runtime ``undefined column''.
+  \item \textbf{Refactorveiligheid} bij multi-event migratie: slug, \texttt{event\_id}, signed claims, en admin FormData-velden blijven synchroon.
+\end{itemize}
+JavaScript zou werken, maar de kost van types is laag t.o.v.\ de kost van stille datafouten bij check-in en tickets.
+
+\section{Waarom Next.js 16 (App Router) + React 19}
+\begin{itemize}[leftmargin=*]
+  \item Server Components voor data-reads dicht bij SQLite (homepage, adminlijsten) zonder aparte JSON-BFF.
+  \item Client Components alleen waar nodig (formulieren, scanner, interactieve tabellen).
+  \item Route Handlers als API zonder Express.
+  \item \texttt{proxy.ts} (Next 16-conventie) beschermt \texttt{/admin/*} vóór page-render.
+\end{itemize}
+\textbf{Belangrijk:} deze Next-versie wijkt af van oudere docs. Lees altijd
+\texttt{node\_modules/next/dist/docs/} in de repo vóór framework-wijzigingen (\texttt{AGENTS.md}).
+
+\section{Waarom SQLite + better-sqlite3}
+\begin{itemize}[leftmargin=*]
+  \item Zero-ops voor een club: geen managed DB, backups = map \texttt{data/} kopiëren.
+  \item \texttt{better-sqlite3} is synchroon en snel in Node --- ideaal in route handlers zonder connection pool.
+  \item Nadelen bewust aanvaard: slechte fit voor multi-region serverless writes; Vercel-demo's zijn ephemeral.
+    Productie op een VPS met persistente schijf is het bedoelde pad.
+\end{itemize}
+
+\section{Kernstack}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Laag} & \textbf{Keuze} \\
+\midrule
+Runtime & Node 22, Next.js 16.3.1 (Turbopack in dev) \\
+UI & React 19.2, Tailwind CSS 4, Google font Josefin Sans \\
+Validatie & Zod 4 \\
+DB & better-sqlite3 13, bestand \texttt{data/tickets.db} \\
+QR & \texttt{qrcode} (server), \texttt{@yudiel/react-qr-scanner} (admin camera) \\
+Mail & nodemailer (optioneel SMTP) \\
+Auth & SHA-256 sessiecookie \texttt{gate\_session} \\
+Tickets & HMAC-SHA256 tokenformaat \texttt{t1.<body>.<sig>} \\
+\bottomrule
+\end{tabularx}
+
+%======================================================================
+\chapter{Repositorystructuur --- elk bestand uitgelegd}
+%======================================================================
+
+\section{Overzicht boom}
+\begin{lstlisting}
+ticketing/
+  app/                 # App Router: pages + API
+  components/          # React UI (server/client)
+  lib/                 # Domeinlogica, DB, auth, mail, tokens
+  public/              # Statische assets (logo)
+  data/                # Runtime: tickets.db + uploads/ (niet ``broncode'')
+  proxy.ts             # Admin route guard
+  next.config.ts
+  package.json
+  tsconfig.json
+  AGENTS.md / README.md
+\end{lstlisting}
+
+\section{Rootconfiguratie}
+
+\subsection{\texttt{package.json}}
+Definieert scripts \texttt{dev}, \texttt{build}, \texttt{start}, \texttt{lint} en alle dependencies.
+Er is \textbf{geen} testscript: kwaliteit wordt manueel/via lint+build afgedwongen.
+
+\subsection{\texttt{tsconfig.json}}
+Strict TypeScript, path alias \texttt{@/*} $\to$ projectroot. Daardoor imports als
+\texttt{@/lib/db} in plaats van relatieve \texttt{../../}.
+
+\subsection{\texttt{next.config.ts}}
+Markeert native/CJS-modules (\texttt{better-sqlite3}, evt.\ nodemailer) correct voor bundling,
+zodat server routes in de Node-runtime blijven.
+
+\subsection{\texttt{postcss.config.mjs} + Tailwind 4}
+PostCSS laadt \texttt{@tailwindcss/postcss}. Styling zit grotendeels in utility-classes plus
+CSS-variabelen in \texttt{app/globals.css} (\texttt{--paper}, \texttt{--ink}/\texttt{forest},
+\texttt{--accent}, \texttt{--muted}, \texttt{--card}, \texttt{--line}).
+
+\subsection{\texttt{eslint.config.mjs}}
+\texttt{eslint-config-next}: App Router-regels + TypeScript.
+
+\subsection{\texttt{proxy.ts}}
+Next~16 proxy/middleware-equivalent. Matcher: \texttt{/admin} en \texttt{/admin/:path*}.
+\begin{itemize}[leftmargin=*]
+  \item Niet ingelogd op adminpagina $\to$ redirect \texttt{/admin/login?next=...}
+  \item Wel ingelogd op loginpagina $\to$ redirect \texttt{/admin}
+  \item \textbf{API-routes} (\texttt{/api/*}) vallen \emph{niet} onder deze matcher;
+        elke admin-API herhaalt cookiecheck zelf.
+\end{itemize}
+
+\subsection{\texttt{AGENTS.md} / \texttt{README.md}}
+Operationele notities voor agents/developers: defaults, geen verplichte \texttt{.env},
+waarschuwing om \texttt{node\_modules/}, \texttt{data/*}, \texttt{.next/} niet per ongeluk te committen
+(er is geen \texttt{.gitignore} in deze repo).
+
+\section{Map \texttt{lib/} --- domeinlaag}
+
+\subsection{\texttt{lib/config.ts} --- omgeving en seeddefinities}
+\begin{itemize}[leftmargin=*]
+  \item \texttt{getEvents()} leest seed-events uit (prioriteit):
+    \texttt{EVENTS\_JSON} $\to$ legacy \texttt{EVENT\_*} vars $\to$ hardcoded fallback
+    (\texttt{afc-avond}, \texttt{afc-workshop}).
+  \item \texttt{getAppUrl()} uit \texttt{APP\_URL} (default \texttt{http://localhost:3000}).
+  \item \texttt{getAdminPassword()} uit \texttt{ADMIN\_PASSWORD} (default \texttt{admin123}).
+  \item \textbf{Belangrijk:} dit is \emph{seed/config}, niet de live eventbron.
+        Runtime-UI leest events uit SQLite via \texttt{lib/db.ts}.
+\end{itemize}
+
+\subsection{\texttt{lib/session.ts} --- sessietoken}
+\begin{lstlisting}
+SESSION_COOKIE = "gate_session"
+token = hex(SHA-256(UTF8("gate:" + adminPassword)))
+\end{lstlisting}
+Vergelijking gebeurt length-check + XOR-loop (timing-vriendelijker dan \texttt{===}).
+Er zit \textbf{geen} expiry in het token zelf; cookie \texttt{maxAge} (typisch 12u) bepaalt levensduur.
+\textbf{Keuze:} simpel, geen JWT-library, werkt in Edge/proxy via Web Crypto.
+
+\subsection{\texttt{lib/auth.ts}}
+Re-export van session helpers + \texttt{requireAdmin()} voor Server Components:
+ongeldige cookie $\to$ \texttt{redirect("/admin/login")}.
+
+\subsection{\texttt{lib/ticket-token.ts} --- ondertekende tickets}
+Formaat: \texttt{t1.<base64url(JSON claims)>.<base64url(HMAC-SHA256(body))>}.
+
+Claims (\texttt{v: 1}): \texttt{id}, \texttt{eventId}, \texttt{eventSlug}, \texttt{eventName},
+\texttt{name}, \texttt{email}, \texttt{phone}, \texttt{extraInfo}, \texttt{foodPreference},
+\texttt{cvOriginalName}, \texttt{createdAt}.
+
+Secret: \texttt{TICKET\_SECRET} $\to$ anders \texttt{ADMIN\_PASSWORD} $\to$ anders
+\texttt{demo-ticket-secret}.
+
+\texttt{verifyTicketToken} gebruikt \texttt{timingSafeEqual}. Bij succes bouwt het een
+\texttt{Registration}-achtig object met \texttt{cvStoredName = id + ".pdf"} en
+\texttt{checkedInAt = null} (check-in status komt altijd uit DB als die er is).
+
+\textbf{Waarom signed tokens?} Op Vercel is DB-state per instance niet gedeeld. De QR moet
+toch verifieerbaar blijven; daarna kan \texttt{getRegistrationByToken} de claims in de lokale DB upserten.
+
+\subsection{\texttt{lib/ticket.ts}}
+\begin{itemize}[leftmargin=*]
+  \item \texttt{ticketUrl(slug, token)} $\to$ \texttt{\{APP\_URL\}/ticket/\{slug\}/\{encodeURIComponent(token)\}}.
+  \item \texttt{parseTicketPayload(raw)} accepteert:
+    prefixes \texttt{TICKET:}/\texttt{AFC:}, volledige ticket-URL's (\texttt{/ticket/} of \texttt{/t/}),
+    raw signed \texttt{t1...}, of legacy tokens \texttt{[A-Za-z0-9\_-]\{16,\}}.
+\end{itemize}
+Dit maakt de scanner tolerant voor ``camera leest URL'' versus ``camera leest kale token''.
+
+\subsection{\texttt{lib/qr.ts}}
+Genereert QR die de \emph{ticket-URL} encodeert (niet enkel de token), 360px, ECL M,
+kleuren navy/wit. \texttt{qrDataUrl} voor UI; \texttt{qrPngBuffer} voor e-mail-CID.
+
+\subsection{\texttt{lib/validation.ts}}
+Zod-schema \texttt{registrationFields}: slug, naam (2--120), e-mail (lower+regex),
+telefoon (8--40), extraInfo (max 2000, default leeg), foodPreference $\in$ \texttt{FOOD\_OPTIONS}.
+
+\subsection{\texttt{lib/food.ts}}
+Enum/lijst voedselvoorkeuren + \texttt{foodLabel()}. Één bron voor formulier, validatie en CSV.
+
+\subsection{\texttt{lib/types.ts}}
+\texttt{Registration} (camelCase) $\leftrightarrow$ \texttt{RegistrationRow} (SQL join-kolommen)
+via \texttt{mapRegistration}. Voorkomt dat UI per ongeluk snake\_case verwacht.
+
+\subsection{\texttt{lib/datetime.ts}}
+\begin{itemize}[leftmargin=*]
+  \item Weergave in \texttt{Europe/Brussels} met \texttt{nl-BE}.
+  \item \texttt{brusselsLocalToIso}: zet \texttt{datetime-local} (Brussel-wandtijd) om naar UTC ISO
+        via iteratieve offsetcorrectie (zonder extra TZ-library).
+  \item \texttt{isoToBrusselsInput}: omgekeerd voor adminformulieren.
+\end{itemize}
+
+\subsection{\texttt{lib/csv.ts}}
+Excel-vriendelijke CSV: UTF-8 BOM, delimiter \texttt{;}, alle cellen gequoted.
+Kolommen: Event, Naam, E-mail, Telefoon, Voedselvoorkeur, Extra info, CV,
+Ingeschreven op, Aanwezig, Check-in tijd, Ticketcode.
+
+\subsection{\texttt{lib/email.ts}}
+Als \texttt{SMTP\_HOST} én \texttt{SMTP\_FROM} ontbreken: mail wordt overgeslagen
+(\texttt{\{sent:false, reason:"not-configured"\}}). Anders nodemailer + inline QR (CID).
+Inschrijving faalt \textbf{niet} als mail faalt (best-effort).
+
+\subsection{\texttt{lib/db.ts} --- hart van de datalaag}
+Zie hoofdstuk~\ref{ch:data}. Bevat schema, migratie single$\to$multi-event, seed,
+CRUD voor events/registrations, check-in, file cleanup, Vercel padlogica, en
+signed-token upsert bij tokenlookup.
+
+\section{Map \texttt{app/} --- routes en UI}
+
+\subsection{Layout \& globale stijl}
+\begin{itemize}[leftmargin=*]
+  \item \texttt{app/layout.tsx}: \texttt{lang="nl"}, Josefin Sans CSS-variable, metadata ``AFC Ticketing''.
+  \item \texttt{app/globals.css}: design tokens + utility helpers + printregels.
+  \item \texttt{app/not-found.tsx}: generieke 404 (o.a.\ onbekend ticket/event).
+\end{itemize}
+
+\subsection{Publieke pages}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Pad} & \textbf{Bestand / rol} \\
+\midrule
+\texttt{/} & \texttt{app/page.tsx} --- open events (\texttt{getOpenEvents}), optionele foto \\
+\texttt{/events/[slug]} & inschrijfpagina: intro + optionele \texttt{description} + \texttt{RegisterForm} \\
+\texttt{/ticket/[eventSlug]/[token]} & ticket + QR; query \texttt{nieuw}, \texttt{mail} \\
+\texttt{/afgelopen} & gearchiveerde events (read-only) \\
+\bottomrule
+\end{tabularx}
+
+Alle list/detail pages gebruiken \texttt{export const dynamic = "force-dynamic"} zodat SQLite-wijzigingen
+meteen zichtbaar zijn (geen statische cache van eventlijsten).
+
+\subsection{Admin pages}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Pad} & \textbf{Rol} \\
+\midrule
+\texttt{/admin/login} & wachtwoordformulier (\texttt{LoginForm}) \\
+\texttt{/admin} & dashboard stats + snelle links \\
+\texttt{/admin/events} & \texttt{EventManager} CRUD \\
+\texttt{/admin/deelnemers} & \texttt{AttendeeTable} (+ \texttt{?event=}) \\
+\texttt{/admin/scanner} & \texttt{CheckinScanner} \\
+\bottomrule
+\end{tabularx}
+Elke admin page (behalve login) start met \texttt{await requireAdmin()}.
+
+\section{Map \texttt{components/}}
+\begin{description}[style=nextline,leftmargin=0pt]
+  \item[\texttt{SiteHeader.tsx}] Publieke header met AFC-logo + link naar organisatie/login.
+  \item[\texttt{AdminNav.tsx}] Clientnav + logout (\texttt{DELETE /api/auth}).
+  \item[\texttt{LoginForm.tsx}] \texttt{POST /api/auth} met password; volgt \texttt{?next=}.
+  \item[\texttt{RegisterForm.tsx}] Client form $\to$ \texttt{POST /api/register} (multipart) $\to$ redirect ticket.
+  \item[\texttt{TicketCard.tsx}] Toont gegevens + QR + print; waarschuwt als mail faalde.
+  \item[\texttt{EventManager.tsx}] Admin eventform: intro, uitgebreide beschrijving, optionele foto,
+        open/close venster, archiveren, verwijderen.
+  \item[\texttt{AttendeeTable.tsx}] Zoeken, filteren, manueel toevoegen/verwijderen, check-in toggle, CV-link, export.
+  \item[\texttt{CheckinScanner.tsx}] Camera + manuele token/e-mail check-in via \texttt{/api/checkin}.
+\end{description}
+
+\section{Map \texttt{public/}}
+Relevant: \texttt{afc-gent-logo.svg}. Overige SVG's zijn Next-starterresten en niet functioneel nodig.
+
+\section{Map \texttt{data/} (runtime)}
+\begin{lstlisting}
+data/
+  tickets.db          # SQLite hoofdbestand
+  tickets.db-wal/shm  # WAL sidecars (lokaal)
+  uploads/
+    {registrationId}.pdf
+    event-{eventId}.jpg|png|webp|gif
+\end{lstlisting}
+Op Vercel: zelfde structuur onder \texttt{/tmp/ticketing-data/}.
+
+%======================================================================
+\chapter{Datamodel en persistentie}
+\label{ch:data}
+%======================================================================
+
+\section{Initialisatievolgorde bij cold start}
+\begin{enumerate}[leftmargin=*]
+  \item Bepaal data-dir (cwd/\texttt{data} of \texttt{/tmp/ticketing-data}).
+  \item Maak uploadmap aan.
+  \item Open SQLite; journal mode WAL (lokaal) of DELETE (Vercel).
+  \item \texttt{foreign\_keys = ON}.
+  \item \texttt{ensureEventSchema} (\texttt{CREATE TABLE IF NOT EXISTS} + \texttt{ensureColumn}).
+  \item Seed events als tabel leeg is (\texttt{getEvents()} uit config).
+  \item Migreer legacy single-event \texttt{registrations} indien nodig.
+  \item Zorg dat registrations-tabel + indexes bestaan.
+  \item Cache connectie op \texttt{globalThis} voor hot reload / warm serverless.
+\end{enumerate}
+
+\section{Tabel \texttt{events}}
+\begin{lstlisting}
+id TEXT PRIMARY KEY
+slug TEXT NOT NULL UNIQUE
+name TEXT NOT NULL
+date TEXT NOT NULL                 -- ISO timestamp
+location TEXT NOT NULL
+intro TEXT NOT NULL                -- korte tekst homepage
+description TEXT NOT NULL DEFAULT '' -- enkel eventpagina
+image_stored_name TEXT              -- optioneel bestand in uploads/
+is_open INTEGER NOT NULL DEFAULT 1  -- handmatige schakelaar
+archived INTEGER NOT NULL DEFAULT 0
+registration_opens_at TEXT          -- optioneel ISO
+registration_closes_at TEXT         -- optioneel ISO
+created_at TEXT NOT NULL
+\end{lstlisting}
+
+\subsection{Acceptatieregel inschrijving}
+Een event accepteert inschrijvingen iff:
+\[
+\neg archived \;\wedge\; is\_open=1 \;\wedge\;
+(now \ge opens\_at \lor opens\_at=\emptyset) \;\wedge\;
+(now \le closes\_at \lor closes\_at=\emptyset).
+\]
+Homepage toont enkel events die deze regel passeren (\texttt{getOpenEvents}).
+
+\section{Tabel \texttt{registrations}}
+\begin{lstlisting}
+id TEXT PRIMARY KEY
+event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+name TEXT NOT NULL
+email TEXT NOT NULL COLLATE NOCASE
+phone TEXT NOT NULL
+extra_info TEXT NOT NULL DEFAULT ''
+food_preference TEXT NOT NULL
+cv_original_name TEXT NOT NULL
+cv_stored_name TEXT NOT NULL
+ticket_token TEXT NOT NULL UNIQUE
+checked_in_at TEXT                  -- NULL = nog niet binnen
+created_at TEXT NOT NULL
+UNIQUE(event_id, email)
+\end{lstlisting}
+Indexes op \texttt{event\_id}, \texttt{checked\_in\_at}, \texttt{created\_at}.
+
+\section{Migratie single-event $\to$ multi-event}
+Oude DB's hadden \texttt{registrations} zonder \texttt{event\_id}.
+Procedure:
+\begin{enumerate}[leftmargin=*]
+  \item Detecteer via \texttt{PRAGMA table\_info}.
+  \item Rename naar \texttt{registrations\_legacy} (met herstelpad als een vorige run crashte en de legacy-tabel bleef bestaan).
+  \item Maak nieuwe tabel; \texttt{INSERT OR IGNORE ... SELECT} met fallback \texttt{event\_id} = oudste event.
+  \item Drop legacy.
+\end{enumerate}
+Deze migratie is bewust idempotent/resilient: een achtergebleven
+\texttt{registrations\_legacy} mag \texttt{npm run build}/start niet breken.
+
+\section{Bestanden op schijf}
+\begin{itemize}[leftmargin=*]
+  \item CV: \texttt{\{registrationId\}.pdf}
+  \item Eventfoto: \texttt{event-\{eventId\}.\{ext\}}
+  \item Bij image replace/delete of event/registration delete: best-effort \texttt{unlink}.
+\end{itemize}
+
+\section{Domain mapping}
+SQL join levert \texttt{event\_slug}/\texttt{event\_name}; \texttt{mapRegistration} zet om naar camelCase.
+UI en API werken bij voorkeur met het domain model; DB-helpers accepteren vaak beide lagen intern.
+
+%======================================================================
+\chapter{Authenticatie en autorisatie}
+%======================================================================
+
+\section{Admin login flow}
+\begin{enumerate}[leftmargin=*]
+  \item UI: \texttt{POST /api/auth} JSON \texttt{\{password\}}.
+  \item Server vergelijkt met \texttt{getAdminPassword()}.
+  \item Bij succes: cookie \texttt{gate\_session=SHA256("gate:"+password)},
+        \texttt{httpOnly}, \texttt{sameSite=lax}, \texttt{path=/},
+        \texttt{secure} als \texttt{APP\_URL} met \texttt{https} begint, \texttt{maxAge} $\approx$ 12u.
+  \item Logout: \texttt{DELETE /api/auth} verwijdert cookie.
+\end{enumerate}
+
+\section{Beschermingslagen (defense in depth)}
+\begin{enumerate}[leftmargin=*]
+  \item \texttt{proxy.ts} blokkeert admin \emph{pages}.
+  \item \texttt{requireAdmin()} in server pages (extra redirect).
+  \item Elke gevoelige API checkt opnieuw de cookie (want \texttt{/api} zit niet in proxy matcher).
+\end{enumerate}
+Publiek blijven o.a.\ \texttt{/api/register} en \texttt{/api/event-image/[id]}.
+CV-download is admin-only.
+
+\section{Beperkingen van dit authmodel}
+\begin{itemize}[leftmargin=*]
+  \item Geen per-user accounts, geen audit log van wie inlogde.
+  \item Token verandert automatisch als adminwachtwoord verandert (alle sessies invalid).
+  \item Geen CSRF-token; mitigatie via \texttt{SameSite=Lax} + same-origin form posts.
+  \item Voor internet-facing productie: sterk wachtwoord via env, HTTPS, reverse proxy.
+\end{itemize}
+
+%======================================================================
+\chapter{API-referentie}
+%======================================================================
+
+Alle hieronder genoemde routes draaien in \texttt{runtime = "nodejs"} (nodig voor
+\texttt{better-sqlite3} en filesystem).
+
+\section{Publiek}
+
+\subsection{\texttt{POST /api/register}}
+Multipart form:
+\texttt{eventSlug}, \texttt{name}, \texttt{email}, \texttt{phone}, \texttt{foodPreference},
+\texttt{extraInfo?}, \texttt{cv} (PDF, verplicht, $\le$ 5\,MB).
+
+Stappen:
+\begin{enumerate}[leftmargin=*]
+  \item Zod-parse $\to$ 400 bij fout.
+  \item Event bestaat + accepteert inschrijvingen $\to$ anders 404.
+  \item PDF-type/grootte $\to$ 400/413.
+  \item Unieke e-mail per event $\to$ anders 409.
+  \item \texttt{randomUUID()} als id; schrijf CV; mint HMAC-token; insert DB.
+  \item Best-effort mail.
+  \item JSON \texttt{\{ok, eventSlug, token, emailSent\}} (UI redirect naar ticket).
+\end{enumerate}
+
+\subsection{\texttt{GET /api/event-image/[id]}}
+Publiek. 404 als geen image. Stream bestand met content-type op extensie; cachebaar.
+
+\section{Auth}
+\subsection{\texttt{POST /api/auth}} / \texttt{DELETE /api/auth}
+Zie vorig hoofdstuk.
+
+\section{Admin --- check-in \& export}
+
+\subsection{\texttt{POST /api/checkin}}
+Cookie verplicht. Body JSON kan bevatten:
+\texttt{payload} (scanruwe tekst), \texttt{token}, \texttt{id}, \texttt{email},
+\texttt{eventSlug?}, \texttt{undo?}.
+
+Gedrag:
+\begin{itemize}[leftmargin=*]
+  \item \texttt{undo:true} + id: clear \texttt{checked\_in\_at}.
+  \item Anders resolve registratie; zet check-in timestamp als nog leeg.
+  \item Ambiguous e-mail over events $\to$ 409 met matches.
+  \item Onbekend $\to$ 404.
+  \item Succes: naam, foodPreference, alreadyCheckedIn, eventName, \ldots
+\end{itemize}
+
+\subsection{\texttt{GET /api/export?event=slug?}}
+CSV download; optioneel gefilterd op event.
+
+\subsection{\texttt{GET /api/cv/[id]}}
+Admin-only PDF stream met originele filename in \texttt{Content-Disposition}.
+
+\section{Admin --- events \texttt{/api/admin/events}}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Method} & \textbf{Body / effect} \\
+\midrule
+POST & multipart create (+ optionele image) \\
+PUT & multipart update (id + velden + optionele image/clearImage) \\
+PATCH & JSON \texttt{\{id, archived\}} \\
+DELETE & JSON \texttt{\{id\}} cascade registrations + files \\
+\bottomrule
+\end{tabularx}
+Velden o.a.\ name, slug?, date (datetime-local Brussel), location, intro, description,
+isOpen, archived, registrationOpensAt/ClosesAt, image, clearImage.
+Images: jpeg/png/webp/gif, max 5\,MB.
+
+\section{Admin --- attendees \texttt{/api/admin/attendees}}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{POST} multipart: zelfde velden als register; CV optioneel;
+        mag ook op gesloten events; optioneel \texttt{sendEmail=1}.
+  \item \textbf{DELETE} JSON \texttt{\{id\}} + CV cleanup.
+\end{itemize}
+
+%======================================================================
+\chapter{End-to-end flows}
+%======================================================================
+
+\section{Publieke inschrijving}
+\begin{lstlisting}
+Browser GET /
+  -> Server: getOpenEvents() from SQLite
+  -> Cards (image? + intro)
+User clicks event
+  -> GET /events/{slug}
+  -> intro + description? + RegisterForm
+User submits multipart
+  -> POST /api/register
+  -> validate, store PDF, mint t1-token, insert row, maybe SMTP
+  -> redirect /ticket/{slug}/{token}?nieuw=1&mail=0|1
+Ticket page
+  -> getRegistrationByToken (DB or verify+upsert)
+  -> qrDataUrl(ticketUrl)
+  -> TicketCard
+\end{lstlisting}
+
+\section{Deurcheck-in}
+\begin{lstlisting}
+Admin login -> /admin/scanner
+Camera reads QR (URL or token)
+  -> POST /api/checkin { payload }
+  -> parseTicketPayload -> getRegistrationByToken -> set checked_in_at
+UI shows name + food preference + alreadyCheckedIn?
+\end{lstlisting}
+
+\section{Admin event met foto + lange beschrijving}
+\begin{lstlisting}
+/admin/events -> EventManager
+Create/Edit form includes:
+  intro (homepage), description (event page only),
+  optional image upload / clearImage
+POST/PUT /api/admin/events
+  -> create/update row; save event-{id}.ext
+Homepage shows image if image_stored_name set
+Event page shows description if non-empty
+\end{lstlisting}
+
+\section{Export}
+Admin klikt export $\to$ \texttt{GET /api/export} $\to$ CSV met BOM voor Excel.
+
+%======================================================================
+\chapter{UI-architectuur en designkeuzes}
+%======================================================================
+
+\section{Server vs client}
+Server Components lezen DB direct (geen waterfalls via client fetch voor initial paint).
+Client Components isoleren browser-API's (File input, camera, \texttt{useRouter.refresh()}).
+
+\section{Visuele taal}
+Navy \texttt{\#081C3C}, accent oranje \texttt{\#EC6525}, papierachtige achtergrond,
+grote serif/display headings via utility \texttt{.serif}, afgeronde kaarten ($\approx$ 28px).
+Doel: herkenbaar AFC/organisatiegevoel zonder zwaar design system.
+
+\section{Waarom geen aparte componentlibrary}
+Voor deze scope (enkele tientallen schermen) zijn Tailwind + lokale componenten sneller
+dan shadcn/MUI te onderhouden. Interactieve ``cards'' bestaan alleen als echte UI-containers
+(formulieren, eventkaarten), niet als decoratie.
+
+%======================================================================
+\chapter{Omgeving, deploy en operationele concerns}
+%======================================================================
+
+\section{Environment variables}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Var} & \textbf{Rol / default} \\
+\midrule
+\texttt{ADMIN\_PASSWORD} & admin login (default \texttt{admin123}) \\
+\texttt{APP\_URL} & absolute URL in QR/mail (default localhost:3000) \\
+\texttt{TICKET\_SECRET} & HMAC secret (valt terug op admin password) \\
+\texttt{EVENTS\_JSON} / \texttt{EVENT\_*} & seed bij lege DB \\
+\texttt{SMTP\_HOST}, \texttt{SMTP\_FROM}, \ldots & optionele mail \\
+\texttt{VERCEL}/\texttt{VERCEL\_ENV} & schakelt data-dir naar \texttt{/tmp} \\
+\bottomrule
+\end{tabularx}
+Geen verplichte \texttt{.env} voor lokale demo.
+
+\section{Scripts}
+\begin{lstlisting}
+npm install
+npm run dev      # http://localhost:3000
+npm run lint
+npm run build && npm start
+\end{lstlisting}
+
+\section{VPS (aanbevolen productie)}
+Persistente schijf, Node 22, reverse proxy met HTTPS, env met sterk wachtwoord +
+\texttt{APP\_URL} + SMTP. Backup: stop service, kopieer \texttt{data/}.
+Update: \texttt{git pull \&\& npm ci \&\& npm run build \&\& systemctl restart \ldots}.
+
+\section{Vercel-beperkingen}
+Geschikt als preview/demo. Schrijfacties in \texttt{/tmp} verdwijnen tussen cold starts.
+Signed tickets mitigeren ticketweergave; blijvende registraties vereisen persistente storage
+(dus VPS of externe object/DB store --- niet in huidige code).
+
+\section{Git-hygiëne}
+Repo mist \texttt{.gitignore}. Commit nooit per ongeluk \texttt{node\_modules/},
+\texttt{.next/}, \texttt{data/tickets.db*}, of grote uploadbinaries.
+
+%======================================================================
+\chapter{Reconstructiegids: bouw de tool opnieuw}
+%======================================================================
+
+\section{Fase 0 --- scaffold}
+\begin{enumerate}[leftmargin=*]
+  \item Next.js App Router + TS + Tailwind 4 + ESLint.
+  \item Dependencies: better-sqlite3, zod, qrcode, nodemailer, react-qr-scanner + types.
+  \item Path alias \texttt{@/*}; \texttt{proxy.ts} voor \texttt{/admin/*}.
+\end{enumerate}
+
+\section{Fase 1 --- datalaag}
+Implementeer \texttt{lib/db.ts} exact volgens schema hierboven, inclusief seed + migratie.
+Schrijf eerst helpers: \texttt{createEvent}, \texttt{createRegistration},
+\texttt{getRegistrationByToken} (met verify+upsert), \texttt{checkInRegistration}.
+
+\section{Fase 2 --- tokens \& validatie}
+\texttt{ticket-token.ts}, \texttt{ticket.ts}, \texttt{validation.ts}, \texttt{food.ts}, \texttt{datetime.ts}.
+
+\section{Fase 3 --- publieke API + UI}
+\texttt{POST /api/register}, homepage, eventpagina, ticketpagina, optionele mail/QR.
+
+\section{Fase 4 --- admin}
+Auth cookie, dashboard, events CRUD (+ image/description), attendees, scanner, export, CV download.
+
+\section{Fase 5 --- harding}
+force-dynamic op data pages; Vercel padlogica; image/CV size limits; unique email constraint;
+archiefvensters; resilient legacy migratie.
+
+\section{Acceptatiechecklist}
+\begin{itemize}[leftmargin=*]
+  \item Inschrijven mét PDF werkt; duplicate e-mail $\to$ 409.
+  \item Ticket QR opent dezelfde ticketpagina; scanner checkt in.
+  \item Event zonder foto/beschrijving blijft netjes; mét foto/beschrijving toont correcte plaatsen.
+  \item Zonder SMTP slaagt register toch.
+  \item Admin delete event ruimt registrations + files op.
+  \item \texttt{npm run lint} en \texttt{npm run build} groen.
+\end{itemize}
+
+%======================================================================
+\chapter{Beslissingen, trade-offs en uitbreidingspaden}
+%======================================================================
+
+\section{Belangrijkste trade-offs}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{SQLite vs Postgres:} eenvoud vs horizontale schaal.
+  \item \textbf{Signed tickets vs opaque DB tokens:} serverless-resilience vs revoke-from-DB-only.
+    Huidige hybride: opaque unique kolom + HMAC claims.
+  \item \textbf{Shared admin password vs echte users:} snelle ops vs accounting.
+  \item \textbf{CV op lokale schijf vs S3:} eenvoud vs multi-instance deeling.
+  \item \textbf{Geen testsuite:} snellere iteratie; regressierisico --- overweeg later API integration tests.
+\end{itemize}
+
+\section{Mogelijke evoluties (niet geïmplementeerd)}
+\begin{itemize}[leftmargin=*]
+  \item Object storage voor CV's/images.
+  \item Postgres + migrations framework.
+  \item Rate limiting op \texttt{/api/register}.
+  \item Per-scanner accounts / role-based access.
+  \item Soft-delete en audit trail.
+  \item Officiële \texttt{.gitignore} en \texttt{.env.example}.
+\end{itemize}
+
+%======================================================================
+\chapter{Appendix}
+%======================================================================
+
+\section{Snelle bestand-naar-verantwoordelijkheid mapping}
+\begin{longtable}{@{}p{0.42\textwidth}p{0.5\textwidth}@{}}
+\toprule
+Bestand & Verantwoordelijkheid \\
+\midrule
+\endhead
+\texttt{lib/db.ts} & Schema, CRUD, migratie, uploads pad \\
+\texttt{lib/config.ts} & Env + seed events \\
+\texttt{lib/session.ts}/\texttt{auth.ts} & Cookie auth \\
+\texttt{lib/ticket-token.ts} & HMAC tickets \\
+\texttt{lib/ticket.ts}/\texttt{qr.ts} & URL + QR \\
+\texttt{lib/validation.ts}/\texttt{food.ts} & Inputcontracten \\
+\texttt{lib/email.ts}/\texttt{csv.ts}/\texttt{datetime.ts} & Mail, export, tijd \\
+\texttt{proxy.ts} & Admin page gate \\
+\texttt{app/api/register/route.ts} & Publieke inschrijving \\
+\texttt{app/api/auth/route.ts} & Login/logout \\
+\texttt{app/api/checkin/route.ts} & Check-in/undo \\
+\texttt{app/api/export/route.ts} & CSV \\
+\texttt{app/api/cv/[id]/route.ts} & CV download \\
+\texttt{app/api/event-image/[id]/route.ts} & Publieke eventfoto \\
+\texttt{app/api/admin/events/route.ts} & Eventbeheer \\
+\texttt{app/api/admin/attendees/route.ts} & Deelnemers add/delete \\
+\texttt{components/EventManager.tsx} & Admin event UI \\
+\texttt{components/AttendeeTable.tsx} & Admin deelnemers UI \\
+\texttt{components/CheckinScanner.tsx} & Scanner UI \\
+\texttt{components/RegisterForm.tsx} & Publiek formulier \\
+\texttt{components/TicketCard.tsx} & Ticketweergave \\
+\bottomrule
+\end{longtable}
+
+\section{HTTP-statuscodes die de API consequent gebruikt}
+\begin{itemize}[leftmargin=*]
+  \item 200 --- succes
+  \item 400 --- validatiefout / slechte input
+  \item 401 --- niet ingelogd
+  \item 404 --- onbekend event/ticket/deelnemer / gesloten inschrijving
+  \item 409 --- conflict (duplicate e-mail, ambiguous check-in)
+  \item 413 --- upload te groot
+\end{itemize}
+
+\section{Slot}
+Wie dit document volgt, kan de AFC Ticketing-tool opnieuw opzetten met dezelfde
+architectuurkeuzes: monolithische Next.js-app, SQLite, HMAC-tickets, optionele SMTP,
+multi-event admin, en een bewuste scheiding tussen korte intro (homepage) en uitgebreide
+beschrijving + optionele foto (eventkaart/eventpagina).
+
+\end{document}
