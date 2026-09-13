@@ -10,8 +10,9 @@ export default async function TicketPage({
   params: Promise<{ eventSlug: string; token: string }>;
   searchParams: Promise<{ nieuw?: string; mail?: string }>;
 }) {
-  const { eventSlug, token } = await params;
+  const { eventSlug, token: rawToken } = await params;
   const query = await searchParams;
+  const token = decodeURIComponent(rawToken);
   const registration = getRegistrationByToken(token);
   if (!registration || registration.eventSlug !== eventSlug) notFound();
 

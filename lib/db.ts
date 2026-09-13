@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { getEvents } from "./config";
+import { verifyTicketToken } from "./ticket-token";
 import { mapRegistration, type Registration, type RegistrationRow } from "./types";
 
 const globalForDb = globalThis as unknown as { ticketDb?: Database.Database };
@@ -229,11 +230,61 @@ export function getRegistrationByEmail(
   return row ? mapRegistration(row) : undefined;
 }
 
+function upsertResolvedRegistration(registration: Registration): Registration {
+  const event = getEventBySlug(registration.eventSlug);
+  if (!event) return registration;
+
+  const normalized: Registration = {
+    ...registration,
+    eventId: event.id,
+    eventName: event.name,
+  };
+
+  const existingById = getRegistrationById(normalized.id);
+  if (existingById) return existingById;
+
+  const existingByToken = db
+    .prepare(`${selectAll} WHERE r.ticket_token = ?`)
+    .get(normalized.ticketToken) as RegistrationRow | undefined;
+  if (existingByToken) return mapRegistration(existingByToken);
+
+  try {
+    return createRegistration({
+      id: normalized.id,
+      eventId: normalized.eventId,
+      name: normalized.name,
+      email: normalized.email,
+      phone: normalized.phone,
+      extraInfo: normalized.extraInfo,
+      foodPreference: normalized.foodPreference,
+      cvOriginalName: normalized.cvOriginalName,
+      cvStoredName: normalized.cvStoredName,
+      ticketToken: normalized.ticketToken,
+    });
+  } catch {
+    return (
+      getRegistrationById(normalized.id) ??
+      (() => {
+        const row = db
+          .prepare(`${selectAll} WHERE r.ticket_token = ?`)
+          .get(normalized.ticketToken) as RegistrationRow | undefined;
+        return row ? mapRegistration(row) : normalized;
+      })()
+    );
+  }
+}
+
 export function getRegistrationByToken(token: string): Registration | undefined {
   const row = db
     .prepare(`${selectAll} WHERE r.ticket_token = ?`)
     .get(token) as RegistrationRow | undefined;
-  return row ? mapRegistration(row) : undefined;
+  if (row) return mapRegistration(row);
+
+  // On Vercel each serverless instance has its own /tmp SQLite. Signed tickets
+  // remain valid across instances even when the local DB does not have the row.
+  const signed = verifyTicketToken(token);
+  if (!signed) return undefined;
+  return upsertResolvedRegistration(signed);
 }
 
 export function getRegistrationById(id: string): Registration | undefined {

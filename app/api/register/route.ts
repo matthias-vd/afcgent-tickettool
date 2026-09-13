@@ -10,6 +10,7 @@ import {
 } from "@/lib/db";
 import { sendTicketEmail } from "@/lib/email";
 import { FOOD_OPTIONS } from "@/lib/food";
+import { mintTicketToken } from "@/lib/ticket-token";
 import { registrationFields } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -66,7 +67,20 @@ export async function POST(request: NextRequest) {
   }
 
   const id = randomUUID();
-  const ticketToken = randomUUID().replaceAll("-", "");
+  const createdAt = new Date().toISOString();
+  const ticketToken = mintTicketToken({
+    id,
+    eventId: event.id,
+    eventSlug: event.slug,
+    eventName: event.name,
+    name: parsed.data.name,
+    email: parsed.data.email,
+    phone: parsed.data.phone,
+    extraInfo: parsed.data.extraInfo,
+    foodPreference: parsed.data.foodPreference,
+    cvOriginalName: cv.name,
+    createdAt,
+  });
   const storedName = `${id}.pdf`;
   const bytes = Buffer.from(await cv.arrayBuffer());
   await fs.writeFile(path.join(getUploadDir(), storedName), bytes);

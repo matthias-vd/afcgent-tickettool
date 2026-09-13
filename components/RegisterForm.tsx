@@ -37,7 +37,9 @@ export function RegisterForm({ eventSlug }: { eventSlug: string }) {
 
       const params = new URLSearchParams({ nieuw: "1" });
       params.set("mail", payload.emailSent ? "1" : "0");
-      router.push(`/ticket/${payload.eventSlug}/${payload.token}?${params.toString()}`);
+      router.push(
+        `/ticket/${payload.eventSlug}/${encodeURIComponent(payload.token)}?${params.toString()}`,
+      );
     } catch {
       setError("Er ging iets mis. Probeer het opnieuw.");
     } finally {
