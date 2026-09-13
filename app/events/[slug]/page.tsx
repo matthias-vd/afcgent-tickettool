@@ -17,17 +17,35 @@ export default async function EventRegistrationPage({
   if (!event || event.archived) notFound();
 
   const open = isEventAcceptingRegistrations(event);
+  const description = event.description?.trim();
 
   return (
     <div className="flex min-h-full flex-col">
       <SiteHeader />
       <main className="mx-auto grid w-full max-w-6xl flex-1 gap-12 px-6 pb-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
         <section className="max-w-xl pt-4">
+          {event.image_stored_name ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`/api/event-image/${event.id}`}
+              alt=""
+              className="mb-8 h-56 w-full rounded-[28px] object-cover"
+            />
+          ) : null}
           <p className="text-sm tracking-[0.18em] uppercase text-accent">
             {open ? "Live inschrijving" : "Inschrijving gesloten"}
           </p>
-          <h1 className="serif mt-4 text-5xl leading-[1.05] sm:text-6xl">{event.name}</h1>
-          <p className="mt-6 max-w-md text-lg leading-8 text-muted">{event.intro}</p>
+          <h1 className="serif mt-4 text-5xl leading-[1.05] sm:text-6xl">
+            {event.name}
+          </h1>
+          <p className="mt-6 max-w-md text-lg leading-8 text-muted">
+            {event.intro}
+          </p>
+          {description ? (
+            <div className="mt-6 max-w-md whitespace-pre-wrap text-base leading-8 text-ink">
+              {description}
+            </div>
+          ) : null}
           <dl className="mt-10 grid gap-5 text-sm">
             <div>
               <dt className="text-muted">Wanneer</dt>

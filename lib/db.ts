@@ -14,6 +14,8 @@ export type DbEvent = {
   date: string;
   location: string;
   intro: string;
+  description: string;
+  image_stored_name: string | null;
   is_open: number;
   archived: number;
   registration_opens_at: string | null;
@@ -48,6 +50,8 @@ function ensureEventSchema(db: Database.Database) {
       date TEXT NOT NULL,
       location TEXT NOT NULL,
       intro TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      image_stored_name TEXT,
       is_open INTEGER NOT NULL DEFAULT 1,
       archived INTEGER NOT NULL DEFAULT 0,
       registration_opens_at TEXT,
@@ -58,6 +62,8 @@ function ensureEventSchema(db: Database.Database) {
   ensureColumn(db, "events", "archived", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "events", "registration_opens_at", "TEXT");
   ensureColumn(db, "events", "registration_closes_at", "TEXT");
+  ensureColumn(db, "events", "description", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "events", "image_stored_name", "TEXT");
 }
 
 function tableExists(db: Database.Database, name: string) {
@@ -503,6 +509,9 @@ export type EventInput = {
   date: string;
   location: string;
   intro: string;
+  description?: string;
+  imageStoredName?: string | null;
+  clearImage?: boolean;
   isOpen?: boolean;
   archived?: boolean;
   registrationOpensAt?: string | null;
@@ -532,11 +541,11 @@ export function createEvent(input: EventInput): DbEvent {
   db.prepare(
     `
     INSERT INTO events (
-      id, slug, name, date, location, intro, is_open, archived,
-      registration_opens_at, registration_closes_at, created_at
+      id, slug, name, date, location, intro, description, image_stored_name,
+      is_open, archived, registration_opens_at, registration_closes_at, created_at
     ) VALUES (
-      @id, @slug, @name, @date, @location, @intro, @is_open, @archived,
-      @registration_opens_at, @registration_closes_at, @created_at
+      @id, @slug, @name, @date, @location, @intro, @description, @image_stored_name,
+      @is_open, @archived, @registration_opens_at, @registration_closes_at, @created_at
     )
   `,
   ).run({
@@ -546,6 +555,8 @@ export function createEvent(input: EventInput): DbEvent {
     date: input.date.trim(),
     location: input.location.trim(),
     intro: input.intro.trim(),
+    description: (input.description ?? "").trim(),
+    image_stored_name: input.imageStoredName?.trim() || null,
     is_open: input.isOpen === false ? 0 : 1,
     archived: input.archived ? 1 : 0,
     registration_opens_at: normalizeOptionalDate(input.registrationOpensAt),
@@ -569,6 +580,12 @@ export function updateEvent(id: string, input: EventInput): DbEvent {
     throw new Error("Deze slug bestaat al.");
   }
 
+  const nextImageName = input.clearImage
+    ? null
+    : input.imageStoredName === undefined
+      ? existing.image_stored_name
+      : input.imageStoredName?.trim() || null;
+
   db.prepare(
     `
     UPDATE events SET
@@ -577,6 +594,8 @@ export function updateEvent(id: string, input: EventInput): DbEvent {
       date = @date,
       location = @location,
       intro = @intro,
+      description = @description,
+      image_stored_name = @image_stored_name,
       is_open = @is_open,
       archived = @archived,
       registration_opens_at = @registration_opens_at,
@@ -590,11 +609,25 @@ export function updateEvent(id: string, input: EventInput): DbEvent {
     date: input.date.trim(),
     location: input.location.trim(),
     intro: input.intro.trim(),
+    description: (input.description ?? "").trim(),
+    image_stored_name: nextImageName,
     is_open: input.isOpen === false ? 0 : 1,
     archived: input.archived ? 1 : 0,
     registration_opens_at: normalizeOptionalDate(input.registrationOpensAt),
     registration_closes_at: normalizeOptionalDate(input.registrationClosesAt),
   });
+
+  if (
+    existing.image_stored_name &&
+    existing.image_stored_name !== nextImageName
+  ) {
+    const oldPath = path.join(getUploadDir(), existing.image_stored_name);
+    try {
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    } catch {
+      // Best-effort cleanup of replaced event image.
+    }
+  }
 
   const updated = getEventById(id);
   if (!updated) throw new Error("Event kon niet worden bijgewerkt.");
@@ -636,6 +669,15 @@ export function deleteEvent(id: string): DbEvent {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     } catch {
       // Best-effort cleanup of uploaded CVs.
+    }
+  }
+
+  if (existing.image_stored_name) {
+    const imagePath = path.join(getUploadDir(), existing.image_stored_name);
+    try {
+      if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
+    } catch {
+      // Best-effort cleanup of event image.
     }
   }
 

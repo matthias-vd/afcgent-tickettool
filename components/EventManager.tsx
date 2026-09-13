@@ -17,6 +17,9 @@ type FormState = {
   date: string;
   location: string;
   intro: string;
+  description: string;
+  hasImage: boolean;
+  clearImage: boolean;
   isOpen: boolean;
   archived: boolean;
   registrationOpensAt: string;
@@ -29,6 +32,9 @@ const emptyForm: FormState = {
   date: "",
   location: "",
   intro: "",
+  description: "",
+  hasImage: false,
+  clearImage: false,
   isOpen: true,
   archived: false,
   registrationOpensAt: "",
@@ -44,6 +50,9 @@ function toForm(event?: EventStatsRow): FormState {
     date: isoToBrusselsInput(event.date) || event.date.slice(0, 16),
     location: event.location,
     intro: event.intro,
+    description: event.description ?? "",
+    hasImage: Boolean(event.image_stored_name),
+    clearImage: false,
     isOpen: Boolean(event.is_open),
     archived: Boolean(event.archived),
     registrationOpensAt: isoToBrusselsInput(event.registration_opens_at),
@@ -59,6 +68,7 @@ export function EventManager({ events }: { events: EventStatsRow[] }) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   const sorted = useMemo(
     () =>
@@ -71,6 +81,7 @@ export function EventManager({ events }: { events: EventStatsRow[] }) {
 
   function openCreate() {
     setForm(emptyForm);
+    setImageFile(null);
     setShowForm(true);
     setError(null);
     setMessage(null);
@@ -78,6 +89,7 @@ export function EventManager({ events }: { events: EventStatsRow[] }) {
 
   function openEdit(event: EventStatsRow) {
     setForm(toForm(event));
+    setImageFile(null);
     setShowForm(true);
     setError(null);
     setMessage(null);
@@ -96,10 +108,13 @@ export function EventManager({ events }: { events: EventStatsRow[] }) {
     data.set("date", form.date);
     data.set("location", form.location);
     data.set("intro", form.intro);
+    data.set("description", form.description);
     data.set("isOpen", form.isOpen ? "1" : "0");
     data.set("archived", form.archived ? "1" : "0");
+    data.set("clearImage", form.clearImage ? "1" : "0");
     data.set("registrationOpensAt", form.registrationOpensAt);
     data.set("registrationClosesAt", form.registrationClosesAt);
+    if (imageFile) data.set("image", imageFile);
 
     try {
       const response = await fetch("/api/admin/events", {
@@ -114,6 +129,7 @@ export function EventManager({ events }: { events: EventStatsRow[] }) {
       setMessage(form.id ? "Event bijgewerkt." : "Event toegevoegd.");
       setShowForm(false);
       setForm(emptyForm);
+      setImageFile(null);
       router.refresh();
     } catch {
       setError("Er ging iets mis. Probeer opnieuw.");
@@ -250,7 +266,7 @@ export function EventManager({ events }: { events: EventStatsRow[] }) {
             />
           </label>
           <label className="grid gap-2 text-sm sm:col-span-2">
-            <span>Intro</span>
+            <span>Korte intro (homepage)</span>
             <textarea
               required
               rows={3}
@@ -261,6 +277,65 @@ export function EventManager({ events }: { events: EventStatsRow[] }) {
               className="rounded-2xl border border-line bg-card px-4 py-3"
             />
           </label>
+          <label className="grid gap-2 text-sm sm:col-span-2">
+            <span>Uitgebreide beschrijving (enkel op eventpagina, optioneel)</span>
+            <textarea
+              rows={6}
+              value={form.description}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  description: event.target.value,
+                }))
+              }
+              placeholder="Extra info die bezoekers zien wanneer ze het event openen…"
+              className="rounded-2xl border border-line bg-card px-4 py-3"
+            />
+          </label>
+          <div className="grid gap-3 text-sm sm:col-span-2">
+            <span>Foto boven/op de eventkaart (optioneel)</span>
+            {form.hasImage && !form.clearImage && !imageFile ? (
+              <div className="overflow-hidden rounded-2xl border border-line">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/event-image/${form.id}`}
+                  alt="Huidige eventfoto"
+                  className="max-h-48 w-full object-cover"
+                />
+              </div>
+            ) : null}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                setImageFile(file);
+                if (file) {
+                  setForm((current) => ({ ...current, clearImage: false }));
+                }
+              }}
+              className="rounded-2xl border border-line bg-card px-4 py-3"
+            />
+            {form.hasImage ? (
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={form.clearImage}
+                  onChange={(event) => {
+                    setForm((current) => ({
+                      ...current,
+                      clearImage: event.target.checked,
+                    }));
+                    if (event.target.checked) setImageFile(null);
+                  }}
+                />
+                Bestaande foto verwijderen
+              </label>
+            ) : null}
+            <p className="text-xs text-muted">
+              JPG/PNG/WEBP/GIF, max. 5 MB. Zonder foto blijft de kaart tekstueel.
+            </p>
+          </div>
           <label className="grid gap-2 text-sm">
             <span>Inschrijving open vanaf</span>
             <input
@@ -328,6 +403,7 @@ export function EventManager({ events }: { events: EventStatsRow[] }) {
               onClick={() => {
                 setShowForm(false);
                 setForm(emptyForm);
+                setImageFile(null);
               }}
               className="rounded-full border border-line px-5 py-2.5 text-sm font-semibold"
             >
