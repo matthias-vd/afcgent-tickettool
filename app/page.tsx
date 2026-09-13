@@ -33,29 +33,41 @@ export default function HomePage() {
             {events.map((event) => (
               <article
                 key={event.id}
-                className="rounded-[28px] border border-line bg-card p-6 sm:p-8"
+                className="overflow-hidden rounded-[28px] border border-line bg-card"
               >
-                <p className="text-sm tracking-[0.18em] uppercase text-accent">
-                  Open voor inschrijving
-                </p>
-                <h2 className="serif mt-3 text-3xl">{event.name}</h2>
-                <p className="mt-4 text-muted">{event.intro}</p>
-                <dl className="mt-6 grid gap-3 text-sm">
-                  <div>
-                    <dt className="text-muted">Wanneer</dt>
-                    <dd className="mt-1 text-base">{formatEventDate(event.date)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted">Waar</dt>
-                    <dd className="mt-1 text-base">{event.location}</dd>
-                  </div>
-                </dl>
-                <Link
-                  href={`/events/${event.slug}`}
-                  className="mt-7 inline-flex rounded-full bg-forest px-5 py-3 text-sm font-semibold text-card"
-                >
-                  Inschrijven
-                </Link>
+                {event.image_stored_name ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`/api/event-image/${event.id}`}
+                    alt=""
+                    className="h-48 w-full object-cover"
+                  />
+                ) : null}
+                <div className="p-6 sm:p-8">
+                  <p className="text-sm tracking-[0.18em] uppercase text-accent">
+                    Open voor inschrijving
+                  </p>
+                  <h2 className="serif mt-3 text-3xl">{event.name}</h2>
+                  <p className="mt-4 text-muted">{event.intro}</p>
+                  <dl className="mt-6 grid gap-3 text-sm">
+                    <div>
+                      <dt className="text-muted">Wanneer</dt>
+                      <dd className="mt-1 text-base">
+                        {formatEventDate(event.date)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted">Waar</dt>
+                      <dd className="mt-1 text-base">{event.location}</dd>
+                    </div>
+                  </dl>
+                  <Link
+                    href={`/events/${event.slug}`}
+                    className="mt-7 inline-flex rounded-full bg-forest px-5 py-3 text-sm font-semibold text-card"
+                  >
+                    Inschrijven
+                  </Link>
+                </div>
               </article>
             ))}
           </section>
