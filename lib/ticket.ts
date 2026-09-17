@@ -5,6 +5,10 @@ export function ticketUrl(eventSlug: string, token: string) {
   return `${getAppUrl()}/ticket/${eventSlug}/${encodeURIComponent(token)}`;
 }
 
+export function cancelUrl(token: string) {
+  return `${getAppUrl()}/uitschrijven/${encodeURIComponent(token)}`;
+}
+
 export function parseTicketPayload(raw: string): string | null {
   const value = raw.trim();
   if (!value) return null;

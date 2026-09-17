@@ -12,6 +12,7 @@ export type Registration = {
   cvStoredName: string;
   ticketToken: string;
   checkedInAt: string | null;
+  cancelledAt: string | null;
   createdAt: string;
 };
 
@@ -29,6 +30,7 @@ export type RegistrationRow = {
   cv_stored_name: string;
   ticket_token: string;
   checked_in_at: string | null;
+  cancelled_at: string | null;
   created_at: string;
 };
 
@@ -47,6 +49,7 @@ export function mapRegistration(row: RegistrationRow): Registration {
     cvStoredName: row.cv_stored_name,
     ticketToken: row.ticket_token,
     checkedInAt: row.checked_in_at,
+    cancelledAt: row.cancelled_at ?? null,
     createdAt: row.created_at,
   };
 }

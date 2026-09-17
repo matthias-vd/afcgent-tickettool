@@ -10,6 +10,7 @@ import {
   getEventBySlug,
   getRegistrationByEmail,
   getUploadDir,
+  reactivateRegistration,
 } from "@/lib/db";
 import { sendTicketEmail } from "@/lib/email";
 import { FOOD_OPTIONS } from "@/lib/food";
@@ -18,7 +19,7 @@ import { registrationFields } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
-const MAX_CV_BYTES = 5 * 1024 * 1024;
+const MAX_CV_BYTES = 15 * 1024 * 1024;
 
 async function assertAdmin() {
   const jar = await cookies();
@@ -54,17 +55,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Ongeldige voedselvoorkeur." }, { status: 400 });
   }
 
-  if (getRegistrationByEmail(parsed.data.email, event.id)) {
+  const existing = getRegistrationByEmail(parsed.data.email, event.id);
+  if (existing && !existing.cancelledAt) {
     return NextResponse.json(
       { error: "Dit e-mailadres is al ingeschreven voor dit event." },
       { status: 409 },
     );
   }
 
-  const id = randomUUID();
-  const createdAt = new Date().toISOString();
-  let cvOriginalName = "";
-  let cvStoredName = "";
+  const id = existing?.id ?? randomUUID();
+  const createdAt = existing?.createdAt ?? new Date().toISOString();
+  let cvOriginalName = existing?.cvOriginalName ?? "";
+  let cvStoredName = existing?.cvStoredName ?? "";
 
   const cv = form.get("cv");
   if (cv instanceof File && cv.size > 0) {
@@ -73,7 +75,7 @@ export async function POST(request: NextRequest) {
     }
     if (cv.size > MAX_CV_BYTES) {
       return NextResponse.json(
-        { error: "Het CV mag maximaal 5 MB groot zijn." },
+        { error: "Het CV mag maximaal 15 MB groot zijn." },
         { status: 413 },
       );
     }
@@ -98,18 +100,35 @@ export async function POST(request: NextRequest) {
     createdAt,
   });
 
-  const registration = createRegistration({
-    id,
-    eventId: event.id,
-    name: parsed.data.name,
-    email: parsed.data.email,
-    phone: parsed.data.phone,
-    extraInfo: parsed.data.extraInfo,
-    foodPreference: parsed.data.foodPreference,
-    cvOriginalName,
-    cvStoredName,
-    ticketToken,
-  });
+  const registration = existing?.cancelledAt
+    ? reactivateRegistration(existing.id, {
+        name: parsed.data.name,
+        phone: parsed.data.phone,
+        extraInfo: parsed.data.extraInfo,
+        foodPreference: parsed.data.foodPreference,
+        cvOriginalName: cvOriginalName || undefined,
+        cvStoredName: cvStoredName || undefined,
+        ticketToken,
+      })
+    : createRegistration({
+        id,
+        eventId: event.id,
+        name: parsed.data.name,
+        email: parsed.data.email,
+        phone: parsed.data.phone,
+        extraInfo: parsed.data.extraInfo,
+        foodPreference: parsed.data.foodPreference,
+        cvOriginalName,
+        cvStoredName,
+        ticketToken,
+      });
+
+  if (!registration) {
+    return NextResponse.json(
+      { error: "Deelnemer kon niet worden opgeslagen." },
+      { status: 500 },
+    );
+  }
 
   let emailSent = false;
   if (form.get("sendEmail") === "1") {

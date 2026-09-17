@@ -56,6 +56,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (result && "cancelled" in result) {
+    return NextResponse.json(
+      {
+        error: "Deze persoon heeft zich uitgeschreven. Check-in is niet mogelijk.",
+      },
+      { status: 409 },
+    );
+  }
+
   if (!result) {
     return NextResponse.json(
       { error: "Onbekend ticket. Deze QR-code staat niet in de lijst." },
