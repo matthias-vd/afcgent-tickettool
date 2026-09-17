@@ -17,8 +17,10 @@ export function registrationsToCsv(rows: Registration[]) {
     "Extra info",
     "CV",
     "Ingeschreven op",
+    "Status",
     "Aanwezig",
     "Check-in tijd",
+    "Uitgeschreven op",
     "Ticketcode",
   ];
 
@@ -32,8 +34,10 @@ export function registrationsToCsv(rows: Registration[]) {
       row.extraInfo,
       row.cvOriginalName,
       formatDateTime(row.createdAt),
+      row.cancelledAt ? "Uitgeschreven" : "Ingeschreven",
       row.checkedInAt ? "Ja" : "Nee",
       formatDateTime(row.checkedInAt),
+      formatDateTime(row.cancelledAt),
       row.ticketToken,
     ]
       .map(csvCell)

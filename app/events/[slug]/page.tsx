@@ -81,7 +81,8 @@ export default async function EventRegistrationPage({
             <>
               <h2 className="serif text-3xl">Je gegevens</h2>
               <p className="mt-2 mb-8 text-sm text-muted">
-                Alle velden zijn verplicht, behalve extra info.
+                Alle velden zijn verplicht, behalve extra info (tenzij je
+                “Andere” kiest bij eten).
               </p>
               <RegisterForm eventSlug={event.slug} />
             </>

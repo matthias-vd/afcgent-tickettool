@@ -97,10 +97,15 @@ function createRegistrationsTable(db: Database.Database) {
       cv_stored_name TEXT NOT NULL,
       ticket_token TEXT NOT NULL UNIQUE,
       checked_in_at TEXT,
+      cancelled_at TEXT,
       created_at TEXT NOT NULL,
       UNIQUE(event_id, email)
     );
   `);
+}
+
+function ensureRegistrationSchema(db: Database.Database) {
+  ensureColumn(db, "registrations", "cancelled_at", "TEXT");
 }
 
 function ensureRegistrationIndexes(db: Database.Database) {
@@ -108,6 +113,7 @@ function ensureRegistrationIndexes(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_registrations_event ON registrations(event_id);
     CREATE INDEX IF NOT EXISTS idx_registrations_checked_in ON registrations(checked_in_at);
     CREATE INDEX IF NOT EXISTS idx_registrations_created ON registrations(created_at);
+    CREATE INDEX IF NOT EXISTS idx_registrations_cancelled ON registrations(cancelled_at);
   `);
 }
 
@@ -229,6 +235,7 @@ function createDb() {
   // Always run: also repairs a leftover registrations_legacy from a failed deploy.
   migrateRegistrationsTable(db);
   createRegistrationsTable(db);
+  ensureRegistrationSchema(db);
   ensureRegistrationIndexes(db);
   return db;
 }
@@ -252,6 +259,7 @@ const selectAll = `
          r.cv_stored_name,
          r.ticket_token,
          r.checked_in_at,
+         r.cancelled_at,
          r.created_at
   FROM registrations r
   INNER JOIN events e ON e.id = r.event_id
@@ -266,7 +274,7 @@ export function getUploadDir() {
 export function createRegistration(
   input: Omit<
     Registration,
-    "checkedInAt" | "createdAt" | "eventSlug" | "eventName"
+    "checkedInAt" | "cancelledAt" | "createdAt" | "eventSlug" | "eventName"
   >,
 ): Registration {
   const createdAt = new Date().toISOString();
@@ -274,10 +282,10 @@ export function createRegistration(
     `
     INSERT INTO registrations (
       id, event_id, name, email, phone, extra_info, food_preference,
-      cv_original_name, cv_stored_name, ticket_token, checked_in_at, created_at
+      cv_original_name, cv_stored_name, ticket_token, checked_in_at, cancelled_at, created_at
     ) VALUES (
       @id, @eventId, @name, @email, @phone, @extraInfo, @foodPreference,
-      @cvOriginalName, @cvStoredName, @ticketToken, NULL, @createdAt
+      @cvOriginalName, @cvStoredName, @ticketToken, NULL, NULL, @createdAt
     )
   `,
   ).run({ ...input, createdAt });
@@ -381,13 +389,14 @@ export function getStats(eventId?: string) {
         COUNT(*) AS total,
         SUM(CASE WHEN checked_in_at IS NOT NULL THEN 1 ELSE 0 END) AS present
       FROM registrations
-      WHERE event_id = ?
+      WHERE event_id = ? AND cancelled_at IS NULL
     `
     : `
       SELECT
         COUNT(*) AS total,
         SUM(CASE WHEN checked_in_at IS NOT NULL THEN 1 ELSE 0 END) AS present
       FROM registrations
+      WHERE cancelled_at IS NULL
     `;
   const row = db
     .prepare(query)
@@ -489,8 +498,8 @@ export function getEventStats() {
         e.registration_opens_at,
         e.registration_closes_at,
         e.created_at,
-        COUNT(r.id) AS total,
-        SUM(CASE WHEN r.checked_in_at IS NOT NULL THEN 1 ELSE 0 END) AS present
+        COUNT(CASE WHEN r.cancelled_at IS NULL THEN r.id END) AS total,
+        SUM(CASE WHEN r.cancelled_at IS NULL AND r.checked_in_at IS NOT NULL THEN 1 ELSE 0 END) AS present
       FROM events e
       LEFT JOIN registrations r ON r.event_id = e.id
       GROUP BY e.id
@@ -694,6 +703,7 @@ export function checkInRegistration(lookup: {
 }):
   | { registration: Registration; alreadyCheckedIn: boolean }
   | { ambiguous: true; matches: Registration[] }
+  | { cancelled: true; registration: Registration }
   | null {
   if (lookup.email) {
     const rows = listRegistrations(lookup.eventId).filter(
@@ -713,6 +723,9 @@ export function checkInRegistration(lookup: {
         : undefined;
 
   if (!registration) return null;
+  if (registration.cancelledAt) {
+    return { cancelled: true, registration };
+  }
   if (registration.checkedInAt) {
     return { registration, alreadyCheckedIn: true };
   }
@@ -731,6 +744,62 @@ export function checkInRegistration(lookup: {
 
 export function undoCheckIn(id: string): Registration | undefined {
   db.prepare(`UPDATE registrations SET checked_in_at = NULL WHERE id = ?`).run(id);
+  return getRegistrationById(id);
+}
+
+export function cancelRegistration(token: string): Registration | undefined {
+  const registration = getRegistrationByToken(token);
+  if (!registration) return undefined;
+  if (registration.cancelledAt) return registration;
+
+  const cancelledAt = new Date().toISOString();
+  db.prepare(
+    `
+    UPDATE registrations
+    SET cancelled_at = ?, checked_in_at = NULL
+    WHERE id = ?
+  `,
+  ).run(cancelledAt, registration.id);
+
+  return getRegistrationById(registration.id);
+}
+
+export function reactivateRegistration(
+  id: string,
+  input: {
+    name: string;
+    phone: string;
+    extraInfo: string;
+    foodPreference: string;
+    cvOriginalName?: string;
+    cvStoredName?: string;
+    ticketToken: string;
+  },
+): Registration | undefined {
+  db.prepare(
+    `
+    UPDATE registrations SET
+      name = @name,
+      phone = @phone,
+      extra_info = @extraInfo,
+      food_preference = @foodPreference,
+      cv_original_name = COALESCE(@cvOriginalName, cv_original_name),
+      cv_stored_name = COALESCE(@cvStoredName, cv_stored_name),
+      ticket_token = @ticketToken,
+      cancelled_at = NULL,
+      checked_in_at = NULL
+    WHERE id = @id
+  `,
+  ).run({
+    id,
+    name: input.name,
+    phone: input.phone,
+    extraInfo: input.extraInfo,
+    foodPreference: input.foodPreference,
+    cvOriginalName: input.cvOriginalName ?? null,
+    cvStoredName: input.cvStoredName ?? null,
+    ticketToken: input.ticketToken,
+  });
   return getRegistrationById(id);
 }
 

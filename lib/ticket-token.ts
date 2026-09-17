@@ -73,6 +73,7 @@ export function verifyTicketToken(token: string): Registration | null {
       cvStoredName: `${claims.id}.pdf`,
       ticketToken: token,
       checkedInAt: null,
+      cancelledAt: null,
       createdAt: claims.createdAt,
     };
   } catch {

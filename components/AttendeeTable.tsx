@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { PhoneInput } from "@/components/PhoneInput";
 import { formatDateTime } from "@/lib/datetime";
 import { FOOD_OPTIONS, foodLabel } from "@/lib/food";
 import type { Registration } from "@/lib/types";
@@ -22,18 +23,23 @@ export function AttendeeTable({
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "present" | "absent">("all");
+  const [filter, setFilter] = useState<"all" | "present" | "absent" | "cancelled">(
+    "all",
+  );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addPending, setAddPending] = useState(false);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
+  const [addFood, setAddFood] = useState("");
+  const addExtraRequired = addFood === "andere";
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return rows.filter((row) => {
-      if (filter === "present" && !row.checkedInAt) return false;
-      if (filter === "absent" && row.checkedInAt) return false;
+      if (filter === "cancelled" && !row.cancelledAt) return false;
+      if (filter === "present" && (row.cancelledAt || !row.checkedInAt)) return false;
+      if (filter === "absent" && (row.cancelledAt || row.checkedInAt)) return false;
       if (!needle) return true;
       return [row.name, row.email, row.phone, row.eventName, foodLabel(row.foodPreference)]
         .join(" ")
@@ -43,6 +49,7 @@ export function AttendeeTable({
   }, [filter, query, rows]);
 
   async function toggle(row: Registration) {
+    if (row.cancelledAt) return;
     setBusyId(row.id);
     await fetch("/api/checkin", {
       method: "POST",
@@ -105,6 +112,7 @@ export function AttendeeTable({
       }
 
       form.reset();
+      setAddFood("");
       setAddSuccess(
         payload.ticketPath
           ? `Deelnemer toegevoegd.${payload.emailSent ? " Mail verzonden." : ""}`
@@ -121,7 +129,7 @@ export function AttendeeTable({
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
         <select
           value={selectedEventSlug}
           onChange={(event) => {
@@ -144,12 +152,13 @@ export function AttendeeTable({
           placeholder="Zoek op naam, e-mail of telefoon"
           className="w-full rounded-2xl border border-line bg-card px-4 py-3 sm:max-w-sm"
         />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {(
             [
               ["all", "Alle"],
               ["present", "Aanwezig"],
               ["absent", "Afwezig"],
+              ["cancelled", "Uitgeschreven"],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -233,13 +242,10 @@ export function AttendeeTable({
           </div>
           <div className="field">
             <label htmlFor="admin-phone">Telefoon</label>
-            <input
+            <PhoneInput
               id="admin-phone"
               name="phone"
-              type="tel"
               required
-              minLength={8}
-              maxLength={40}
               className="w-full rounded-2xl border border-line bg-card px-4 py-3"
             />
           </div>
@@ -249,7 +255,8 @@ export function AttendeeTable({
               id="admin-foodPreference"
               name="foodPreference"
               required
-              defaultValue=""
+              value={addFood}
+              onChange={(event) => setAddFood(event.target.value)}
               className="w-full rounded-2xl border border-line bg-card px-4 py-3"
             >
               <option value="" disabled>
@@ -263,17 +270,21 @@ export function AttendeeTable({
             </select>
           </div>
           <div className="field sm:col-span-2">
-            <label htmlFor="admin-extraInfo">Extra info</label>
+            <label htmlFor="admin-extraInfo">
+              Extra info
+              {addExtraRequired ? " (verplicht bij Andere)" : ""}
+            </label>
             <textarea
               id="admin-extraInfo"
               name="extraInfo"
               rows={3}
               maxLength={2000}
+              required={addExtraRequired}
               className="w-full rounded-2xl border border-line bg-card px-4 py-3"
             />
           </div>
           <div className="field sm:col-span-2">
-            <label htmlFor="admin-cv">CV (PDF, optioneel)</label>
+            <label htmlFor="admin-cv">CV (PDF, optioneel, max. 15 MB)</label>
             <input
               id="admin-cv"
               name="cv"
@@ -325,21 +336,46 @@ export function AttendeeTable({
           </thead>
           <tbody>
             {filtered.map((row) => (
-              <tr key={row.id} className="border-b border-line/70 align-top">
+              <tr
+                key={row.id}
+                className={`border-b border-line/70 align-top ${
+                  row.cancelledAt ? "bg-accent/5 text-accent" : ""
+                }`}
+              >
                 <td className="px-4 py-4">
-                  <p className="font-semibold">{row.name}</p>
+                  <p className={`font-semibold ${row.cancelledAt ? "text-accent" : ""}`}>
+                    {row.name}
+                  </p>
                   {row.extraInfo ? (
-                    <p className="mt-1 max-w-xs text-muted">{row.extraInfo}</p>
+                    <p
+                      className={`mt-1 max-w-xs ${
+                        row.cancelledAt ? "text-accent/80" : "text-muted"
+                      }`}
+                    >
+                      {row.extraInfo}
+                    </p>
                   ) : null}
                 </td>
                 <td className="px-4 py-4">{row.eventName}</td>
                 <td className="px-4 py-4">
                   <p>{row.email}</p>
-                  <p className="text-muted">{row.phone}</p>
+                  <p className={row.cancelledAt ? "text-accent/80" : "text-muted"}>
+                    {row.phone}
+                  </p>
                 </td>
                 <td className="px-4 py-4">{foodLabel(row.foodPreference)}</td>
                 <td className="px-4 py-4">
-                  {row.checkedInAt ? (
+                  {row.cancelledAt ? (
+                    <span className="font-semibold text-accent">
+                      Uitgeschreven
+                      <span className="block font-normal text-accent/80">
+                        {formatDateTime(row.cancelledAt)}
+                      </span>
+                      <span className="mt-1 block text-xs font-normal text-accent/70">
+                        Was ingeschreven op {formatDateTime(row.createdAt)}
+                      </span>
+                    </span>
+                  ) : row.checkedInAt ? (
                     <span>
                       Aanwezig
                       <span className="block text-muted">
@@ -352,27 +388,31 @@ export function AttendeeTable({
                 </td>
                 <td className="px-4 py-4">
                   <div className="flex flex-col items-start gap-2">
-                    <button
-                      type="button"
-                      disabled={busyId === row.id}
-                      onClick={() => toggle(row)}
-                      className="rounded-full border border-line px-3 py-1.5"
-                    >
-                      {row.checkedInAt ? "Check-in ongedaan" : "Check in"}
-                    </button>
+                    {!row.cancelledAt ? (
+                      <button
+                        type="button"
+                        disabled={busyId === row.id}
+                        onClick={() => toggle(row)}
+                        className="rounded-full border border-line px-3 py-1.5"
+                      >
+                        {row.checkedInAt ? "Check-in ongedaan" : "Check in"}
+                      </button>
+                    ) : null}
                     {row.cvStoredName ? (
                       <a href={`/api/cv/${row.id}`} className="text-muted underline">
                         Download CV
                       </a>
                     ) : null}
-                    <a
-                      href={`/ticket/${row.eventSlug}/${encodeURIComponent(row.ticketToken)}`}
-                      className="text-muted underline"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open ticket
-                    </a>
+                    {!row.cancelledAt ? (
+                      <a
+                        href={`/ticket/${row.eventSlug}/${encodeURIComponent(row.ticketToken)}`}
+                        className="text-muted underline"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open ticket
+                      </a>
+                    ) : null}
                     <button
                       type="button"
                       disabled={busyId === row.id}

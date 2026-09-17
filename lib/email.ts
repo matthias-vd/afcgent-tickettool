@@ -3,7 +3,7 @@ import type { EventDefinition } from "./config";
 import { formatEventDate } from "./datetime";
 import { foodLabel } from "./food";
 import { qrPngBuffer } from "./qr";
-import { ticketUrl } from "./ticket";
+import { cancelUrl, ticketUrl } from "./ticket";
 import type { Registration } from "./types";
 
 function escapeHtml(value: string) {
@@ -28,6 +28,7 @@ export async function sendTicketEmail(
 
   const qr = await qrPngBuffer(registration.eventSlug, registration.ticketToken);
   const link = ticketUrl(registration.eventSlug, registration.ticketToken);
+  const unenroll = cancelUrl(registration.ticketToken);
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
@@ -52,6 +53,10 @@ export async function sendTicketEmail(
       `Voedselvoorkeur: ${foodLabel(registration.foodPreference)}`,
       "",
       `Toon je QR-code aan de ingang. Ticket: ${link}`,
+      "",
+      "Wil je je inschrijving annuleren? Gebruik deze link:",
+      unenroll,
+      "Na annuleren is je ticket niet meer geldig.",
     ].join("\n"),
     html: `
       <div style="background:#f0f2f5;padding:32px 16px;font-family:'Josefin Sans',Arial,sans-serif;color:#081C3C;">
@@ -75,6 +80,9 @@ export async function sendTicketEmail(
               <p style="margin:0 0 6px;"><strong style="color:#081C3C;">Waar</strong> ${escapeHtml(event.location)}</p>
               <p style="margin:0 0 18px;"><strong style="color:#081C3C;">Eten</strong> ${escapeHtml(foodLabel(registration.foodPreference))}</p>
               <a href="${link}" style="display:inline-block;background:#081C3C;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:999px;">Open je ticket</a>
+              <hr style="border:none;border-top:1px solid #d8dee8;margin:28px 0 16px;" />
+              <p style="margin:0 0 10px;font-size:13px;">Kan je toch niet komen? Je kunt je inschrijving hier annuleren. Je ticket wordt dan ongeldig.</p>
+              <a href="${unenroll}" style="display:inline-block;color:#EC6525;font-size:13px;font-weight:600;">Inschrijving annuleren</a>
             </td>
           </tr>
         </table>

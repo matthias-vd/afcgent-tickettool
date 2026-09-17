@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { PhoneInput } from "@/components/PhoneInput";
 import { FOOD_OPTIONS } from "@/lib/food";
 
 export function RegisterForm({ eventSlug }: { eventSlug: string }) {
@@ -9,6 +10,8 @@ export function RegisterForm({ eventSlug }: { eventSlug: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [foodPreference, setFoodPreference] = useState("");
+  const extraRequired = foodPreference === "andere";
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -66,18 +69,21 @@ export function RegisterForm({ eventSlug }: { eventSlug: string }) {
       </div>
       <div className="field">
         <label htmlFor="phone">Telefoonnummer</label>
-        <input
-          id="phone"
-          name="phone"
-          type="tel"
-          autoComplete="tel"
-          required
-          placeholder="+32 4xx xx xx xx"
-        />
+        <PhoneInput id="phone" name="phone" required />
+        <p className="text-sm text-muted">
+          Standaard België (+32). Wis het nummer om een ander landnummer in te
+          voeren; de vlag volgt automatisch.
+        </p>
       </div>
       <div className="field">
         <label htmlFor="foodPreference">Voedselvoorkeur</label>
-        <select id="foodPreference" name="foodPreference" required defaultValue="">
+        <select
+          id="foodPreference"
+          name="foodPreference"
+          required
+          value={foodPreference}
+          onChange={(event) => setFoodPreference(event.target.value)}
+        >
           <option value="" disabled>
             Kies een optie
           </option>
@@ -89,13 +95,21 @@ export function RegisterForm({ eventSlug }: { eventSlug: string }) {
         </select>
       </div>
       <div className="field">
-        <label htmlFor="extraInfo">Extra info</label>
+        <label htmlFor="extraInfo">
+          Extra info
+          {extraRequired ? " (verplicht bij Andere)" : ""}
+        </label>
         <textarea
           id="extraInfo"
           name="extraInfo"
           rows={4}
           maxLength={2000}
-          placeholder="Allergieën, opmerkingen, extra context…"
+          required={extraRequired}
+          placeholder={
+            extraRequired
+              ? "Beschrijf je allergie of andere voorkeur…"
+              : "Allergieën, opmerkingen, extra context…"
+          }
         />
       </div>
       <div className="field">
@@ -109,7 +123,7 @@ export function RegisterForm({ eventSlug }: { eventSlug: string }) {
           onChange={(event) => setFileName(event.target.files?.[0]?.name ?? null)}
         />
         <p className="text-sm text-muted">
-          {fileName ? fileName : "Maximaal 5 MB, alleen PDF."}
+          {fileName ? fileName : "Maximaal 15 MB, alleen PDF."}
         </p>
       </div>
 
